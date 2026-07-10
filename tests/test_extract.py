@@ -82,6 +82,63 @@ def test_extract_strips_zero_width_chars():
     assert result.text.startswith("hello world")
 
 
+# ---- M11: math-friendly text cleaner ----------------------------------------
+
+
+def test_normalize_folds_superscript_digits_via_nfkc():
+    # ² and ¹¹ (superscript) should fold to ASCII digits so search matches.
+    data = "energy ~ 10² joules; current 10¹¹ amperes".encode("utf-8")
+    result = extract(data, "txt")
+    assert "10^2" not in result.text  # not what NFKC produces; ensure no false shape
+    assert "102 joules" in result.text
+    assert "1011 amperes" in result.text
+
+
+def test_normalize_expands_ligatures():
+    # LaTeX PDFs commonly emit ﬁ ﬀ ﬂ as single codepoints. Search for "efficient"
+    # must match text stored as "eﬃcient".
+    data = "eﬃcient conﬂict aﬀordable ﬁnancial".encode("utf-8")
+    result = extract(data, "txt")
+    assert "efficient conflict affordable financial" in result.text
+
+
+def test_normalize_repairs_hyphenated_linebreaks():
+    # "infor-\nmation" is unsearchable as "information" without repair.
+    data = b"the infor-\nmation was found in the docu-\nment"
+    result = extract(data, "txt")
+    assert "information" in result.text
+    assert "document" in result.text
+    assert "infor-" not in result.text
+
+
+def test_normalize_strips_soft_hyphens():
+    # Soft hyphen U+00AD is invisible but breaks tokenization.
+    data = "opti­mize search­able tokeni­zation".encode("utf-8")
+    result = extract(data, "txt")
+    assert "optimize" in result.text
+    assert "searchable" in result.text
+    assert "­" not in result.text
+
+
+def test_normalize_form_feed_becomes_paragraph_break():
+    data = b"end of page one\fbeginning of page two"
+    result = extract(data, "txt")
+    assert "end of page one\n\nbeginning of page two" in result.text
+    assert "\f" not in result.text
+
+
+def test_normalize_strips_lone_surrogates_and_control_chars():
+    # Lone surrogate + bell (0x07) + DEL (0x7f) — pypdf occasionally leaks these
+    # from broken PDF ToUnicode tables. All must be stripped.
+    raw = "clean\ud800 text\x07 with\x7f junk"
+    data = raw.encode("utf-8", errors="surrogatepass")
+    result = extract(data, "txt")
+    assert "clean" in result.text
+    assert "\ud800" not in result.text
+    assert "\x07" not in result.text
+    assert "\x7f" not in result.text
+
+
 def test_detects_pdf_from_real_file():
     data = FIXTURES.joinpath("paper.pdf").read_bytes()
     assert detect_content_type(data, None, None) == "pdf"
@@ -266,11 +323,11 @@ def test_marker_cooldown_calls_sleep(monkeypatch):
     assert 1.5 in calls, f"expected sleep(1.5), got {calls}"
 
 
-@pytest.mark.skipif(
-    not _MARKER_AVAILABLE or os.environ.get("ALEXANDRIA_TEST_MARKER") != "1",
-    reason="marker backend test disabled; set ALEXANDRIA_TEST_MARKER=1 to enable",
-)
-def test_auto_mode_upgrades_math_pdf_to_marker(tmp_path: Path):
+def test_auto_mode_stays_on_pypdf_for_math_pdf_after_m11(tmp_path: Path, caplog):
+    """M11: auto no longer routes math-heavy docs to marker. It stays on pypdf
+    (with the M11 cleaner) and logs the math signal as an advisory."""
+    import logging
+
     cfg = Config(
         home=tmp_path,
         extractors=ExtractorsConfig(
@@ -278,5 +335,11 @@ def test_auto_mode_upgrades_math_pdf_to_marker(tmp_path: Path):
         ),
     )
     data = FIXTURES.joinpath("paper.pdf").read_bytes()
-    result = extract(data, "pdf", cfg)
-    assert result.extractor.startswith("marker@")   # upgraded, not stuck on pypdf
+    with caplog.at_level(logging.INFO, logger="alexandria.ingest.extract"):
+        result = extract(data, "pdf", cfg)
+
+    assert result.extractor == "pypdf"
+    # The math-density / math-font signal should have been logged with the
+    # "math-heavy document" advisory so operators know why the doc looked odd.
+    joined = "\n".join(r.getMessage() for r in caplog.records)
+    assert "math-heavy" in joined

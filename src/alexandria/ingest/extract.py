@@ -32,6 +32,25 @@ _WS = re.compile(r"[ \t]+")
 _MULTI_NL = re.compile(r"\n{3,}")
 _ZERO_WIDTH = re.compile(r"[​‌‍﻿]")
 
+# Ligatures NFKC does not always fold (LaTeX PDFs sometimes use these as
+# private-use codepoints that survive NFKC). Belt-and-suspenders on top of NFKC.
+_LIG_TRANS = str.maketrans({
+    "ﬀ": "ff",
+    "ﬁ": "fi",
+    "ﬂ": "fl",
+    "ﬃ": "ffi",
+    "ﬄ": "ffl",
+    "ﬅ": "st",
+    "ﬆ": "st",
+})
+_SOFT_HYPHEN = re.compile("­")
+# Hyphenation across line breaks: "infor-\nmation" → "information".
+_HYPHEN_LINEBREAK = re.compile(r"(\w)-\n(\w)")
+# Lone surrogates from broken PDF font ToUnicode tables.
+_LONE_SURROGATE = re.compile(r"[\ud800-\udfff]")
+# C0 / C1 / DEL control chars, preserving \t (0x09) and \n (0x0a).
+_CTRL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x80-\x9f]")
+
 # Greek letters + common math operators. Prose sprinkles the odd Greek ("alpha
 # level was 0.05") but math-heavy docs blow past ~1/1000 chars easily.
 _MATH_CHARS = re.compile(
@@ -59,10 +78,23 @@ _MD_EMPHASIS = re.compile(r"\*{1,3}([^\n*]+)\*{1,3}")
 
 
 def _normalize(text: str) -> str:
-    text = unicodedata.normalize("NFC", text)
+    # NFKC (not NFC) folds superscript/subscript digits, compatibility math
+    # operators, Greek variants, and many ligatures into canonical searchable
+    # forms — the single biggest win for LaTeX-generated PDFs.
+    text = unicodedata.normalize("NFKC", text)
+    text = text.translate(_LIG_TRANS)
     text = _ZERO_WIDTH.sub("", text)
+    text = _SOFT_HYPHEN.sub("", text)
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Form-feed (PDF page separator) → paragraph break, before hyphen repair so
+    # cross-page hyphenation stays split (safer than joining across page bounds).
+    text = text.replace("\f", "\n\n")
+    text = _HYPHEN_LINEBREAK.sub(r"\1\2", text)
+    text = _LONE_SURROGATE.sub("", text)
+    text = _CTRL_CHARS.sub("", text)
     text = _WS.sub(" ", text)
+    # Trim each line so trailing spaces from PDF layout don't linger.
+    text = "\n".join(line.strip() for line in text.split("\n"))
     text = _MULTI_NL.sub("\n\n", text)
     return text.strip()
 
@@ -292,21 +324,23 @@ def _extract_pdf(
         return _extract_pdf_pypdf(data)
 
     if backend == "auto":
-        # Run pypdf first (cheap). Consult the two signals against its output.
-        # If math-heavy or empty, upgrade to marker; otherwise keep pypdf.
+        # M11: auto no longer routes math-heavy docs to marker. The pypdf-cleaner
+        # (NFKC + ligatures + hyphen repair) recovers most searchability without
+        # a model, and marker on CPU is impractical while marker on GPU carries
+        # a thermal cost. The math-density signal is retained as an advisory
+        # log only. Set backend="marker" explicitly for the rare high-fidelity
+        # extraction.
         pypdf_result = _extract_pdf_pypdf(data)
         pypdf_text = pypdf_result[0]
         needs_marker, reason = _detect_math_needed(data, pypdf_text, threshold)
         if needs_marker:
-            log.info("auto: upgrading to marker (%s)", reason)
-            try:
-                return _extract_pdf_marker(data, device, batch_size, cooldown)
-            except Exception as e:
-                log.warning(
-                    "marker upgrade failed (%s); keeping pypdf output", e
-                )
-                return pypdf_result
-        log.info("auto: keeping pypdf (%s)", reason)
+            log.info(
+                "auto: math-heavy document (%s); keeping pypdf. Set "
+                "backend='marker' for higher-fidelity math extraction.",
+                reason,
+            )
+        else:
+            log.info("auto: keeping pypdf (%s)", reason)
         return pypdf_result
 
     return _extract_pdf_pypdf(data)

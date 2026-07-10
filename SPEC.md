@@ -53,7 +53,7 @@ Each source (file or URL) flows through:
    - PDF: `pypdf` for text-first PDFs; fall back to `pdfplumber` if extracted text is empty.
    - HTML: `trafilatura` (main-content extraction, strips nav/ads/boilerplate).
    - TXT/MD: read as UTF-8; markdown is kept as-is (searchable as text).
-5. **Normalize** — collapse whitespace, strip zero-widths, Unicode NFC.
+5. **Normalize** — Unicode NFKC (folds superscript/subscript digits, Greek variants, compatibility math operators — the biggest win for LaTeX-generated PDFs), expand ligatures (ﬁ/ﬀ/ﬂ/ﬃ/ﬄ/st), strip zero-widths and soft hyphens, repair `word-\nword` line-break hyphenation, form-feed → paragraph, drop lone surrogates + C0/C1 control chars, collapse whitespace. See M11.
 6. **Text hash** (`sha256_text`) → *dedup gate 2*. Catches re-exported PDFs, mirrored HTML, and format conversions of the same content.
 7. **Chunk** — 800-token windows with 100-token overlap. Store chunk char offsets back into the full text.
 8. **Embed** — per-chunk vectors. Default model recorded on the document so we can re-embed selectively when swapping models.
@@ -254,6 +254,7 @@ alexandria/
 8. **M8 — Suki deploy.** Live on the A1000 server: `uv sync --extra marker` under Python 3.13, `[network] host="0.0.0.0"` + `allowed_hosts` for Tailscale reach, systemd `--user` unit. Not a code change; deploy-only.
 9. **M9 — Adaptive PDF backend.** `[extractors.pdf] backend = "auto"` routes per-doc: pypdf if fast-path is enough, marker when math is present. Two cheap signals: LaTeX-family font names in the resource dict (CM/LM/TX/RTX/STIX/XITS/MathJax) and Greek+operator density in pypdf's output (default threshold 2.0 per 1000 chars). Empty pypdf text → marker for OCR.
 10. **M10 — Marker thermal safety.** `marker_batch_size` caps surya's per-phase batch sizes (via `RECOGNITION_BATCH_SIZE` etc. env vars, set before marker import) so a small GPU like the A1000 stays under thermal budget. `marker_cooldown_seconds` sleeps between marker runs to help folder ingest recover between docs. Composes with an OS-level `nvidia-smi -pl` power cap applied via `nvidia-power-limit.service`.
+11. **M11 — Math-friendly text cleaner.** Upgrade `_normalize` from NFC → NFKC and add ligature folding, hyphenated line-break repair, soft-hyphen and lone-surrogate stripping, form-feed → paragraph, and C0/C1 control-char removal. Recovers most searchability for LaTeX-generated PDFs with zero model dependency. `backend="auto"` becomes advisory: it still runs the M9 math-density + font-name signals and logs them, but no longer routes to marker (SmolDocling on CPU benchmarked at 130–200s/page with hallucination risk at higher-quality prompts; marker on GPU remains available via explicit `backend="marker"` where the thermal budget allows it).
 
 ## 13. Network transport (M7)
 
