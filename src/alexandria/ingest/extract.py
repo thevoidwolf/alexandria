@@ -141,11 +141,29 @@ def _resolve_device(device: str) -> str:
     return "cpu"
 
 
+_SURYA_BATCH_VARS = (
+    "RECOGNITION_BATCH_SIZE",
+    "DETECTOR_BATCH_SIZE",
+    "LAYOUT_BATCH_SIZE",
+    "OCR_ERROR_BATCH_SIZE",
+    "TABLE_REC_BATCH_SIZE",
+)
+
+
 def _extract_pdf_marker(
-    data: bytes, device: str
+    data: bytes,
+    device: str,
+    batch_size: int = 0,
+    cooldown_seconds: float = 0.0,
 ) -> tuple[str, str | None, str | None, str | None, str]:
     # marker's CLI sets TORCH_DEVICE up-front; the Python API respects it too.
     os.environ.setdefault("TORCH_DEVICE", _resolve_device(device))
+
+    # Cap surya's per-phase batch sizes for thermal safety on small GPUs.
+    # Must happen before the import — surya reads these at module load.
+    if batch_size > 0:
+        for var in _SURYA_BATCH_VARS:
+            os.environ[var] = str(batch_size)
 
     import marker
     from marker.converters.pdf import PdfConverter
@@ -182,6 +200,13 @@ def _extract_pdf_marker(
         version = _pkg_version("marker-pdf")
     except Exception:
         version = "unknown"
+
+    # Post-run cooldown: lets the card breathe before the next doc arrives.
+    # Costs nothing on single-doc ingest; matters for folder walks.
+    if cooldown_seconds > 0:
+        import time
+        time.sleep(cooldown_seconds)
+
     return text, title, None, None, f"marker@{version}"
 
 
@@ -248,15 +273,20 @@ def _extract_pdf(
 ) -> tuple[str, str | None, str | None, str | None, str]:
     backend = "pypdf"
     device = "auto"
-    threshold = 1.0
+    threshold = 2.0
+    batch_size = 0
+    cooldown = 0.0
     if cfg is not None:
-        backend = cfg.extractors.pdf.backend
-        device = cfg.extractors.pdf.device
-        threshold = cfg.extractors.pdf.math_symbol_threshold
+        pdf_cfg = cfg.extractors.pdf
+        backend = pdf_cfg.backend
+        device = pdf_cfg.device
+        threshold = pdf_cfg.math_symbol_threshold
+        batch_size = pdf_cfg.marker_batch_size
+        cooldown = pdf_cfg.marker_cooldown_seconds
 
     if backend == "marker":
         try:
-            return _extract_pdf_marker(data, device)
+            return _extract_pdf_marker(data, device, batch_size, cooldown)
         except Exception as e:
             log.warning("marker extraction failed (%s); falling back to pypdf", e)
         return _extract_pdf_pypdf(data)
@@ -270,7 +300,7 @@ def _extract_pdf(
         if needs_marker:
             log.info("auto: upgrading to marker (%s)", reason)
             try:
-                return _extract_pdf_marker(data, device)
+                return _extract_pdf_marker(data, device, batch_size, cooldown)
             except Exception as e:
                 log.warning(
                     "marker upgrade failed (%s); keeping pypdf output", e

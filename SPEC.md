@@ -253,6 +253,7 @@ alexandria/
 7. **M7 — Network transport.** Streamable HTTP MCP transport with bearer-token auth so agents on other machines can hit the corpus on the GPU server. See §13.
 8. **M8 — Suki deploy.** Live on the A1000 server: `uv sync --extra marker` under Python 3.13, `[network] host="0.0.0.0"` + `allowed_hosts` for Tailscale reach, systemd `--user` unit. Not a code change; deploy-only.
 9. **M9 — Adaptive PDF backend.** `[extractors.pdf] backend = "auto"` routes per-doc: pypdf if fast-path is enough, marker when math is present. Two cheap signals: LaTeX-family font names in the resource dict (CM/LM/TX/RTX/STIX/XITS/MathJax) and Greek+operator density in pypdf's output (default threshold 2.0 per 1000 chars). Empty pypdf text → marker for OCR.
+10. **M10 — Marker thermal safety.** `marker_batch_size` caps surya's per-phase batch sizes (via `RECOGNITION_BATCH_SIZE` etc. env vars, set before marker import) so a small GPU like the A1000 stays under thermal budget. `marker_cooldown_seconds` sleeps between marker runs to help folder ingest recover between docs. Composes with an OS-level `nvidia-smi -pl` power cap applied via `nvidia-power-limit.service`.
 
 ## 13. Network transport (M7)
 

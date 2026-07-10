@@ -48,6 +48,14 @@ class PdfExtractorConfig:
                                           # 2.0 leaves margin. Font-name signal
                                           # catches LaTeX math regardless of density.
 
+    # Thermal safety knobs for marker (M10). Only affect marker code paths.
+    marker_batch_size: int = 0            # 0 = surya defaults (device-picked);
+                                          # 1 = serial (safest on thermal-constrained
+                                          # GPUs like the RTX A1000); 2-4 balances.
+    marker_cooldown_seconds: float = 0.0  # sleep after each marker run; helps
+                                          # folder ingest by letting the card cool
+                                          # between docs. 0 = no cooldown.
+
 
 @dataclass(frozen=True)
 class ExtractorsConfig:

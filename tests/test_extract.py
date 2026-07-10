@@ -204,6 +204,68 @@ def test_detect_math_needed_escalates_empty_text():
     assert "empty" in reason.lower()
 
 
+def test_marker_batch_size_sets_env_vars(monkeypatch):
+    """batch_size > 0 must set every surya BATCH env var *before* marker import."""
+    from alexandria.ingest.extract import _SURYA_BATCH_VARS, _extract_pdf_marker
+
+    # Clear env so we see fresh writes.
+    for var in _SURYA_BATCH_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+    # Stub the marker import chain so we don't actually load 2GB of weights.
+    fake_marker = type("M", (), {})()
+    fake_pdf = type("P", (), {"__init__": lambda self, *a, **k: None,
+                              "__call__": lambda self, path: object()})
+    fake_output = lambda rendered: ("stub text", None, [])
+    fake_create = lambda: {}
+    import sys, types
+    for name, mod in {
+        "marker": types.ModuleType("marker"),
+        "marker.converters": types.ModuleType("marker.converters"),
+        "marker.converters.pdf": types.ModuleType("marker.converters.pdf"),
+        "marker.models": types.ModuleType("marker.models"),
+        "marker.output": types.ModuleType("marker.output"),
+    }.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+    sys.modules["marker.converters.pdf"].PdfConverter = fake_pdf
+    sys.modules["marker.models"].create_model_dict = fake_create
+    sys.modules["marker.output"].text_from_rendered = fake_output
+
+    # Ensure a fresh temp file gets written; marker import is stubbed so
+    # the converter call above is a no-op stub.
+    _extract_pdf_marker(b"%PDF-stub", device="cpu", batch_size=3)
+
+    for var in _SURYA_BATCH_VARS:
+        assert os.environ.get(var) == "3", f"{var} not set from batch_size"
+
+
+def test_marker_cooldown_calls_sleep(monkeypatch):
+    """cooldown_seconds > 0 must sleep before returning."""
+    from alexandria.ingest.extract import _extract_pdf_marker
+
+    calls = []
+    import sys, types, time as _time_mod
+    for name, mod in {
+        "marker": types.ModuleType("marker"),
+        "marker.converters": types.ModuleType("marker.converters"),
+        "marker.converters.pdf": types.ModuleType("marker.converters.pdf"),
+        "marker.models": types.ModuleType("marker.models"),
+        "marker.output": types.ModuleType("marker.output"),
+    }.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+    sys.modules["marker.converters.pdf"].PdfConverter = type(
+        "P", (), {"__init__": lambda self, *a, **k: None,
+                  "__call__": lambda self, path: object()}
+    )
+    sys.modules["marker.models"].create_model_dict = lambda: {}
+    sys.modules["marker.output"].text_from_rendered = lambda r: ("", None, [])
+
+    monkeypatch.setattr(_time_mod, "sleep", lambda s: calls.append(s))
+
+    _extract_pdf_marker(b"%PDF-stub", device="cpu", cooldown_seconds=1.5)
+    assert 1.5 in calls, f"expected sleep(1.5), got {calls}"
+
+
 @pytest.mark.skipif(
     not _MARKER_AVAILABLE or os.environ.get("ALEXANDRIA_TEST_MARKER") != "1",
     reason="marker backend test disabled; set ALEXANDRIA_TEST_MARKER=1 to enable",
