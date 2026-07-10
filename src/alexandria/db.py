@@ -92,7 +92,11 @@ def _create_vec_table(conn: sqlite3.Connection, dim: int) -> None:
 
 
 def connect(db_path: Path, embed_dim: int) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path, isolation_level=None)
+    # check_same_thread=False: the HTTP server dispatches tools across an ASGI
+    # thread pool; we serialize writes with an app-level lock (see server.py).
+    conn = sqlite3.connect(
+        db_path, isolation_level=None, check_same_thread=False
+    )
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
@@ -100,6 +104,9 @@ def connect(db_path: Path, embed_dim: int) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA synchronous = NORMAL")
+    # Let SQLite wait up to 5s on a busy lock before returning SQLITE_BUSY;
+    # simpler and more responsive than an app-level retry loop.
+    conn.execute("PRAGMA busy_timeout = 5000")
 
     conn.executescript(_SCHEMA_SQL)
     _create_vec_table(conn, embed_dim)

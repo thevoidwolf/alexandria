@@ -32,6 +32,8 @@ Non-goals for v1: multi-user, remote sync, near-duplicate detection, LLM auto-cl
               blobs/  (original files, content-addressed by sha256)
 ```
 
+The MCP server ships in two coexisting flavors: **stdio** for same-host clients (the original transport) and **Streamable HTTP** for remote agents on other machines (see §13). The tool surface (§8) is identical between the two.
+
 **Data directory** — `$XDG_DATA_HOME/alexandria/`, falling back to `~/.local/share/alexandria/`. Overridable via `ALEXANDRIA_HOME` env var.
 
 Contents:
@@ -247,3 +249,74 @@ alexandria/
 3. **M3 — Search.** FTS5 + vec + RRF, filters by category/tags.
 4. **M4 — MCP.** Wire the six tools to the ingest/search/catalog layers. Manual test with Claude Code.
 5. **M5 — Polish.** Fixture corpus + tests, README with install/config, error surfaces reviewed.
+6. **M6 — Math-fidelity PDF backend.** Optional `marker` extractor (LaTeX-in-markdown output + surya OCR) selected via `[extractors.pdf] backend = "marker"`. Pypdf kept as fast default + robust fallback on marker failure. Server-primary deploy: install marker only where a GPU exists (`uv sync --extra marker`).
+7. **M7 — Network transport.** Streamable HTTP MCP transport with bearer-token auth so agents on other machines can hit the corpus on the GPU server. See §13.
+
+## 13. Network transport (M7)
+
+Alexandria's MCP server ships in two flavors that coexist:
+
+- **stdio** (`alexandria mcp`) — original transport, used when the client shares the host with the server.
+- **Streamable HTTP** (`alexandria mcp-http`) — MCP's spec-preferred network transport (single `POST /mcp` returning JSON or an SSE stream). Enables remote agents on other machines to reach a central corpus (typically the GPU host that runs marker).
+
+The legacy SSE-only transport is deprecated in the MCP spec; not implemented.
+
+### 13.1 Auth
+
+Static bearer token, verified at ASGI-middleware level before any tool dispatch. Client sends `Authorization: Bearer <token>`.
+
+Token sources, highest priority first:
+
+1. `ALEXANDRIA_AUTH_TOKEN` environment variable.
+2. `--auth-token-file <path>` CLI flag.
+3. `network.auth_token_file` in `config.toml` (default `$ALEXANDRIA_HOME/auth_token`, chmod-600).
+
+Missing or wrong header → HTTP `401` before dispatch. Opt-out for trusted-network deployments (Tailscale, WireGuard, LAN-only): `--no-auth` flag, explicit only.
+
+No token rotation without restart, no OAuth 2.1, no mTLS in v1.
+
+### 13.2 Bind and safety rail
+
+Default bind: `127.0.0.1:8765`. `--host <ip>` to bind to other interfaces.
+
+**Safety rail:** if the resolved host is not loopback (`127.0.0.1`, `localhost`, `::1`) AND neither an auth token nor `--no-auth` is present, the server refuses to start with a clear error. Loud fail beats silently exposing the corpus.
+
+### 13.3 TLS
+
+Out of scope for the app. Alexandria binds plain HTTP; TLS is expected to terminate at a reverse proxy (Caddy sample in README) or inside a mesh network (Tailscale/WireGuard). Cert management belongs in the proxy, not the app.
+
+### 13.4 Concurrency
+
+SQLite runs in WAL mode (multi-reader, single-writer). Writes retry `SQLITE_BUSY` at the connection layer with short exponential backoff (5 attempts, 10 ms → 160 ms). Concurrent search from many clients is fine; concurrent heavy ingest may see brief latency spikes but shouldn't error out.
+
+### 13.5 Config
+
+```toml
+[network]
+host = "127.0.0.1"
+port = 8765
+auth_token_file = "$ALEXANDRIA_HOME/auth_token"   # chmod 600
+```
+
+Resolution order for each setting: CLI flag > env var > config file > default.
+
+### 13.6 Client configuration
+
+Remote MCP client (`~/.claude/mcp.json` on another machine):
+
+```json
+{
+  "mcpServers": {
+    "alexandria-remote": {
+      "url": "https://alexandria.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      }
+    }
+  }
+}
+```
+
+### 13.7 Deferred
+
+Hot token rotation, per-token rate limiting, structured JSON logs, streaming tool responses for long ingests, mTLS / OAuth 2.1.

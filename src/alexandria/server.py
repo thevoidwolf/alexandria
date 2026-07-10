@@ -199,5 +199,81 @@ def run() -> None:
     mcp.run()
 
 
+# ---- Streamable HTTP transport (M7) -----------------------------------------
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def validate_bind(host: str, auth_token: str | None, no_auth: bool) -> None:
+    """Refuse to bind non-loopback interfaces without an auth strategy.
+
+    Loud fail beats silently exposing the corpus. `--no-auth` is an explicit
+    opt-out for trusted-network deployments (Tailscale/WireGuard/LAN).
+    """
+    if host in _LOOPBACK_HOSTS:
+        return
+    if no_auth:
+        return
+    if not auth_token:
+        raise ValueError(
+            f"refusing to bind non-loopback host {host!r} without an auth "
+            "token; supply --auth-token-file / ALEXANDRIA_AUTH_TOKEN, or pass "
+            "--no-auth to explicitly disable auth"
+        )
+
+
+def build_http_app(
+    auth_token: str | None,
+    no_auth: bool,
+    inner=None,
+):
+    """Return the Streamable HTTP MCP app, wrapped with bearer-token auth.
+
+    `inner` lets tests inject a stub Starlette app; production callers omit it
+    and get the real FastMCP streamable-http app. The FastMCP singleton's
+    session manager can only be started once per process, so tests must not
+    reuse the real one.
+    """
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse
+
+    class BearerAuthMiddleware(BaseHTTPMiddleware):
+        def __init__(self, app, expected: str) -> None:
+            super().__init__(app)
+            self._expected = expected
+
+        async def dispatch(self, request, call_next):
+            hdr = request.headers.get("authorization", "")
+            if not hdr.startswith("Bearer "):
+                return JSONResponse(
+                    {"error": "missing bearer token"}, status_code=401
+                )
+            if hdr[7:].strip() != self._expected:
+                return JSONResponse({"error": "invalid token"}, status_code=401)
+            return await call_next(request)
+
+    app = inner if inner is not None else mcp.streamable_http_app()
+    if not no_auth:
+        assert auth_token, "build_http_app: auth_token required when no_auth=False"
+        app.add_middleware(BearerAuthMiddleware, expected=auth_token)
+    return app
+
+
+def run_http(
+    host: str, port: int, auth_token: str | None, no_auth: bool
+) -> None:
+    """Entry point: run the MCP server over Streamable HTTP."""
+    validate_bind(host, auth_token, no_auth)
+    if not no_auth and not auth_token:
+        raise ValueError(
+            "no auth token available; set ALEXANDRIA_AUTH_TOKEN, pass "
+            "--auth-token-file, configure [network] auth_token_file, or "
+            "pass --no-auth"
+        )
+    import uvicorn
+
+    uvicorn.run(build_http_app(auth_token, no_auth), host=host, port=port)
+
+
 if __name__ == "__main__":
     run()

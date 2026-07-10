@@ -26,6 +26,8 @@ dependencies = [
     "httpx>=0.28",
     # MCP server
     "mcp>=1.2",
+    # ASGI server for the Streamable HTTP MCP transport (starlette comes via mcp)
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]

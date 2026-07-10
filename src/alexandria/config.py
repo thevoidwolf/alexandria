@@ -51,6 +51,13 @@ class ExtractorsConfig:
 
 
 @dataclass(frozen=True)
+class NetworkConfig:
+    host: str = "127.0.0.1"
+    port: int = 8765
+    auth_token_file: str | None = None      # explicit path; env/CLI can override
+
+
+@dataclass(frozen=True)
 class Config:
     home: Path
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
@@ -58,6 +65,7 @@ class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
     extractors: ExtractorsConfig = field(default_factory=ExtractorsConfig)
+    network: NetworkConfig = field(default_factory=NetworkConfig)
     category_rules: tuple[CategoryRule, ...] = ()
 
     @property
@@ -102,6 +110,8 @@ def load(home: Path | None = None) -> Config:
         pdf=PdfExtractorConfig(**(extractors_raw.get("pdf") or {})),
     )
 
+    network = NetworkConfig(**(data.get("network") or {}))
+
     rules_raw = data.get("category_rules") or []
     rules = tuple(
         CategoryRule(
@@ -119,5 +129,6 @@ def load(home: Path | None = None) -> Config:
         storage=storage,
         http=http,
         extractors=extractors,
+        network=network,
         category_rules=rules,
     )

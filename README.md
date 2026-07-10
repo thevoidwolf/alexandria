@@ -93,11 +93,14 @@ tags      = ["utility", "electric"]
 
 ## MCP integration
 
-Alexandria exposes six tools over MCP stdio: `ingest_folder_tool`,
-`ingest_url_tool`, `search_tool`, `get_document_tool`, `list_documents_tool`,
-`get_catalog_tool`.
+Alexandria exposes six tools: `ingest_folder_tool`, `ingest_url_tool`,
+`search_tool`, `get_document_tool`, `list_documents_tool`, `get_catalog_tool`.
+The tool surface is identical across both transports.
 
-Add to your MCP client (e.g. `~/.claude/mcp.json` for Claude Code):
+### Local (stdio)
+
+For clients on the same machine (Claude Code on your laptop hitting a local
+corpus). Add to your MCP client (e.g. `~/.claude/mcp.json`):
 
 ```json
 {
@@ -109,6 +112,53 @@ Add to your MCP client (e.g. `~/.claude/mcp.json` for Claude Code):
   }
 }
 ```
+
+### Remote (Streamable HTTP)
+
+For agents on other machines hitting a central corpus (typically the GPU host
+running marker). On the server:
+
+```sh
+# generate a token once
+openssl rand -hex 32 > $ALEXANDRIA_HOME/auth_token && chmod 600 $ALEXANDRIA_HOME/auth_token
+
+# start the server, exposed on the LAN
+uv run alexandria mcp-http --host 0.0.0.0 --port 8765 \
+    --auth-token-file $ALEXANDRIA_HOME/auth_token
+```
+
+Token resolution order: `ALEXANDRIA_AUTH_TOKEN` env var > `--auth-token-file`
+flag > `[network] auth_token_file` in `config.toml`. Missing token when
+binding a non-loopback host aborts startup — pass `--no-auth` for
+trusted-network deploys (Tailscale, WireGuard, LAN behind a firewall).
+
+On the client:
+
+```json
+{
+  "mcpServers": {
+    "alexandria-remote": {
+      "url": "https://alexandria.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <paste-token>"
+      }
+    }
+  }
+}
+```
+
+**TLS is out of scope for the app** — terminate at a reverse proxy. Sample
+Caddy config:
+
+```
+alexandria.example.com {
+    reverse_proxy 127.0.0.1:8765
+}
+```
+
+Or expose only inside a mesh network (Tailscale/WireGuard) and skip TLS
+altogether — `--no-auth` is reasonable there since the mesh already gates
+access.
 
 ## Development
 

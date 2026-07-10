@@ -28,6 +28,7 @@ dependencies = [
     { name = "sqlite-vec" },
     { name = "trafilatura" },
     { name = "typer" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -55,6 +56,7 @@ requires-dist = [
     { name = "sqlite-vec", specifier = ">=0.1.6" },
     { name = "trafilatura", specifier = ">=2.0" },
     { name = "typer", specifier = ">=0.15" },
+    { name = "uvicorn", specifier = ">=0.30" },
 ]
 provides-extras = ["marker"]
 

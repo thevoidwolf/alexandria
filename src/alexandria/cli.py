@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from functools import wraps
 from pathlib import Path
 from typing import Optional
@@ -221,6 +222,55 @@ def mcp() -> None:
     """Run the MCP stdio server."""
     from alexandria.server import run
     run()
+
+
+def _resolve_token(
+    cli_token_file: Path | None, cfg_token_file: str | None
+) -> str | None:
+    """Resolve auth token: env > CLI --auth-token-file > config file > None."""
+    env = os.environ.get("ALEXANDRIA_AUTH_TOKEN")
+    if env:
+        return env.strip()
+    for candidate in (cli_token_file, cfg_token_file):
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser()
+        if path.exists():
+            return path.read_text().strip()
+    return None
+
+
+@app.command("mcp-http")
+def mcp_http_cmd(
+    host: Optional[str] = typer.Option(None, "--host", help="Bind address"),
+    port: Optional[int] = typer.Option(None, "--port", help="TCP port"),
+    auth_token_file: Optional[Path] = typer.Option(
+        None, "--auth-token-file", help="Path to a file containing the bearer token"
+    ),
+    no_auth: bool = typer.Option(
+        False, "--no-auth",
+        help="Disable auth (trusted-network deploys only, e.g. Tailscale)",
+    ),
+) -> None:
+    """Run the MCP server over Streamable HTTP for remote clients.
+
+    Token sources (highest priority first):
+      1. ALEXANDRIA_AUTH_TOKEN environment variable
+      2. --auth-token-file <path>
+      3. [network] auth_token_file in config.toml
+    """
+    cfg = load_config()
+    resolved_host = host or cfg.network.host
+    resolved_port = port or cfg.network.port
+    token = _resolve_token(auth_token_file, cfg.network.auth_token_file)
+
+    from alexandria.server import run_http
+    run_http(
+        host=resolved_host,
+        port=resolved_port,
+        auth_token=token,
+        no_auth=no_auth,
+    )
 
 
 if __name__ == "__main__":
