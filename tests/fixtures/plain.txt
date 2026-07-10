@@ -1,0 +1,3 @@
+This is a plain text file about invoicing. The August electricity bill totalled
+$134.22 and covered the billing period from July 1 to July 31, 2026. The account
+number is 4477-2201-9 and payment is due August 20, 2026.
