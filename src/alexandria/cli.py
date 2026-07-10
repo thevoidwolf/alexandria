@@ -270,6 +270,7 @@ def mcp_http_cmd(
         port=resolved_port,
         auth_token=token,
         no_auth=no_auth,
+        allowed_hosts=cfg.network.allowed_hosts,
     )
 
 

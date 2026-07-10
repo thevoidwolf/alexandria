@@ -55,6 +55,10 @@ class NetworkConfig:
     host: str = "127.0.0.1"
     port: int = 8765
     auth_token_file: str | None = None      # explicit path; env/CLI can override
+    allowed_hosts: tuple[str, ...] = ()      # extra Host: header values MCP will accept
+                                             # (network-visible IPs, MagicDNS names,
+                                             # reverse-proxy hostnames). Loopback is
+                                             # always allowed.
 
 
 @dataclass(frozen=True)
@@ -110,7 +114,10 @@ def load(home: Path | None = None) -> Config:
         pdf=PdfExtractorConfig(**(extractors_raw.get("pdf") or {})),
     )
 
-    network = NetworkConfig(**(data.get("network") or {}))
+    network_raw = dict(data.get("network") or {})
+    if "allowed_hosts" in network_raw:
+        network_raw["allowed_hosts"] = tuple(network_raw["allowed_hosts"] or ())
+    network = NetworkConfig(**network_raw)
 
     rules_raw = data.get("category_rules") or []
     rules = tuple(

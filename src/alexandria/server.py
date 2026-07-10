@@ -222,10 +222,36 @@ def validate_bind(host: str, auth_token: str | None, no_auth: bool) -> None:
         )
 
 
+def _extend_allowed_hosts(hosts: tuple[str, ...]) -> None:
+    """Add extra Host: header values to FastMCP's DNS-rebinding allowlist.
+
+    FastMCP defaults to loopback-only (`127.0.0.1:*`, `localhost:*`, `[::1]:*`).
+    Any non-loopback deploy (Tailscale, LAN, reverse proxy) must add its own
+    hostnames or the middleware returns 421 Misdirected Request before auth
+    even runs.
+    """
+    if not hosts:
+        return
+    sec = mcp.settings.transport_security
+    allowed = list(sec.allowed_hosts)
+    origins = list(sec.allowed_origins)
+    for h in hosts:
+        for pat in (h, f"{h}:*"):
+            if pat not in allowed:
+                allowed.append(pat)
+        for scheme in ("http", "https"):
+            origin = f"{scheme}://{h}:*"
+            if origin not in origins:
+                origins.append(origin)
+    sec.allowed_hosts = allowed
+    sec.allowed_origins = origins
+
+
 def build_http_app(
     auth_token: str | None,
     no_auth: bool,
     inner=None,
+    allowed_hosts: tuple[str, ...] = (),
 ):
     """Return the Streamable HTTP MCP app, wrapped with bearer-token auth.
 
@@ -252,7 +278,11 @@ def build_http_app(
                 return JSONResponse({"error": "invalid token"}, status_code=401)
             return await call_next(request)
 
-    app = inner if inner is not None else mcp.streamable_http_app()
+    if inner is None:
+        _extend_allowed_hosts(allowed_hosts)
+        app = mcp.streamable_http_app()
+    else:
+        app = inner
     if not no_auth:
         assert auth_token, "build_http_app: auth_token required when no_auth=False"
         app.add_middleware(BearerAuthMiddleware, expected=auth_token)
@@ -260,7 +290,11 @@ def build_http_app(
 
 
 def run_http(
-    host: str, port: int, auth_token: str | None, no_auth: bool
+    host: str,
+    port: int,
+    auth_token: str | None,
+    no_auth: bool,
+    allowed_hosts: tuple[str, ...] = (),
 ) -> None:
     """Entry point: run the MCP server over Streamable HTTP."""
     validate_bind(host, auth_token, no_auth)
@@ -272,7 +306,11 @@ def run_http(
         )
     import uvicorn
 
-    uvicorn.run(build_http_app(auth_token, no_auth), host=host, port=port)
+    uvicorn.run(
+        build_http_app(auth_token, no_auth, allowed_hosts=allowed_hosts),
+        host=host,
+        port=port,
+    )
 
 
 if __name__ == "__main__":
