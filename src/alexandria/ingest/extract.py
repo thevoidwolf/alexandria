@@ -32,6 +32,31 @@ _WS = re.compile(r"[ \t]+")
 _MULTI_NL = re.compile(r"\n{3,}")
 _ZERO_WIDTH = re.compile(r"[​‌‍﻿]")
 
+# Greek letters + common math operators. Prose sprinkles the odd Greek ("alpha
+# level was 0.05") but math-heavy docs blow past ~1/1000 chars easily.
+_MATH_CHARS = re.compile(
+    r"[αβγδεζηθικλμνξοπρστυφχψωΓΔΘΛΞΠΣΦΨΩ"
+    r"∫∑∇∂×·⋅∞≈≤≥±→⇒∈∀∃∪∩⊂⊃∅ℝℂℕℤℚ]"
+)
+
+# LaTeX / math-typesetter font-name substrings (matched case-insensitively).
+# Presence of any of these in a PDF's font resource dict is a near-certain
+# "math paper" signal. pdfTeX PDFs subset-prefix names ("VRQZFR+rtxmi"), so we
+# substring-match.
+_MATH_FONT_MARKERS = (
+    "cmex", "cmmi", "cmsy", "cmbsy", "cmmib",    # Computer Modern math series
+    "lmmath", "lmroman",                          # Latin Modern (lmmath variants)
+    "stixmath", "stixsize", "stix-",              # STIX math
+    "xitsmath",                                   # XITS math
+    "txmi", "txsy", "txex",                       # TX Fonts (LaTeX txfonts)
+    "rtxmi", "rtxsy",                             # RTX (rtxfonts) — physics papers
+    "mtsyn", "mtsy",                              # MathTime symbol
+    "mathjax",                                    # MathJax-exported PDFs
+)
+
+# Markdown emphasis wrappers around marker's extracted titles.
+_MD_EMPHASIS = re.compile(r"\*{1,3}([^\n*]+)\*{1,3}")
+
 
 def _normalize(text: str) -> str:
     text = unicodedata.normalize("NFC", text)
@@ -142,16 +167,80 @@ def _extract_pdf_marker(
         os.unlink(tmp_path)
 
     # marker output is markdown; first h1 is a reasonable title fallback when the
-    # source PDF has no /Title metadata (typical for pdfTeX papers).
+    # source PDF has no /Title metadata (typical for pdfTeX papers). Strip any
+    # markdown emphasis wrappers ("# **Foo**" → "Foo").
     title: str | None = None
     for line in text.split("\n", 200):
         s = line.strip()
         if s.startswith("# "):
-            title = s[2:].strip()
+            candidate = s[2:].strip()
+            title = _MD_EMPHASIS.sub(r"\1", candidate).strip() or None
             break
 
-    version = getattr(marker, "__version__", None) or "unknown"
+    try:
+        from importlib.metadata import version as _pkg_version
+        version = _pkg_version("marker-pdf")
+    except Exception:
+        version = "unknown"
     return text, title, None, None, f"marker@{version}"
+
+
+# ---- adaptive dispatch (M9) --------------------------------------------------
+
+
+def _math_density(text: str) -> float:
+    """Return math-symbol count per 1000 chars. 0.0 for empty text."""
+    if not text:
+        return 0.0
+    return len(_MATH_CHARS.findall(text)) / len(text) * 1000.0
+
+
+def _has_math_fonts(data: bytes) -> tuple[bool, str]:
+    """Return (True, matching-font-name) if the PDF embeds a LaTeX-family math
+    font, else (False, ""). Runs in ~10ms — pypdf only walks the font dicts,
+    not the page content."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(data))
+        for page in reader.pages:
+            fonts = ((page.get("/Resources") or {}).get("/Font") or {}) if page else {}
+            for fkey in fonts:
+                try:
+                    base = str(fonts[fkey].get("/BaseFont") or "")
+                except Exception:
+                    continue
+                base_lower = base.lower()
+                for m in _MATH_FONT_MARKERS:
+                    if m in base_lower:
+                        return True, base
+    except Exception:
+        # Malformed PDFs are marker's job anyway; err on the side of upgrading.
+        return False, ""
+    return False, ""
+
+
+def _detect_math_needed(
+    data: bytes, pypdf_text: str, threshold: float
+) -> tuple[bool, str]:
+    """Decide whether an auto-mode PDF should be upgraded from pypdf → marker.
+
+    Returns (needs_marker, reason) where reason is human-readable for logging.
+    """
+    # Signal: pypdf produced no text (probably a scan) → marker's surya OCR.
+    if not pypdf_text.strip():
+        return True, "empty pypdf text (scan?)"
+
+    # Signal: LaTeX/math font embedded in the PDF.
+    has_fonts, font_name = _has_math_fonts(data)
+    if has_fonts:
+        return True, f"math font: {font_name}"
+
+    # Signal: raw math-symbol density in pypdf's flattened text.
+    density = _math_density(pypdf_text)
+    if density >= threshold:
+        return True, f"symbol density {density:.2f}/1000 ≥ {threshold}"
+
+    return False, f"symbol density {density:.2f}/1000 < {threshold}, no math fonts"
 
 
 def _extract_pdf(
@@ -159,15 +248,37 @@ def _extract_pdf(
 ) -> tuple[str, str | None, str | None, str | None, str]:
     backend = "pypdf"
     device = "auto"
+    threshold = 1.0
     if cfg is not None:
         backend = cfg.extractors.pdf.backend
         device = cfg.extractors.pdf.device
+        threshold = cfg.extractors.pdf.math_symbol_threshold
 
     if backend == "marker":
         try:
             return _extract_pdf_marker(data, device)
         except Exception as e:
             log.warning("marker extraction failed (%s); falling back to pypdf", e)
+        return _extract_pdf_pypdf(data)
+
+    if backend == "auto":
+        # Run pypdf first (cheap). Consult the two signals against its output.
+        # If math-heavy or empty, upgrade to marker; otherwise keep pypdf.
+        pypdf_result = _extract_pdf_pypdf(data)
+        pypdf_text = pypdf_result[0]
+        needs_marker, reason = _detect_math_needed(data, pypdf_text, threshold)
+        if needs_marker:
+            log.info("auto: upgrading to marker (%s)", reason)
+            try:
+                return _extract_pdf_marker(data, device)
+            except Exception as e:
+                log.warning(
+                    "marker upgrade failed (%s); keeping pypdf output", e
+                )
+                return pypdf_result
+        log.info("auto: keeping pypdf (%s)", reason)
+        return pypdf_result
+
     return _extract_pdf_pypdf(data)
 
 

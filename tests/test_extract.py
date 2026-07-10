@@ -9,7 +9,13 @@ from alexandria.config import (
     ExtractorsConfig,
     PdfExtractorConfig,
 )
-from alexandria.ingest.extract import detect_content_type, extract
+from alexandria.ingest.extract import (
+    _detect_math_needed,
+    _has_math_fonts,
+    _math_density,
+    detect_content_type,
+    extract,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -130,3 +136,85 @@ def test_extract_pdf_marker_backend_round_trips_latex(tmp_path: Path):
     assert r"\alpha" in result.text               # α as LaTeX macro
     assert r"\vec" in result.text                 # vector arrows (equation 2)
     assert "_{B_z}" in result.text or "B_z" in result.text  # subscript recovered
+
+
+# ---- M9: adaptive backend detection -----------------------------------------
+
+
+def test_math_density_zero_for_plain_prose():
+    text = (
+        "This is a normal paragraph of English text with no unusual symbols, "
+        "just words describing an ordinary situation on a Tuesday afternoon."
+    )
+    assert _math_density(text) == 0.0
+
+
+def test_math_density_high_for_equation_soup():
+    # Handful of Greek + operators packed into a short string.
+    text = "∫α + β · γ dx = δ; ∑ε_n → ∞ ≤ π"
+    assert _math_density(text) > 20.0    # very dense — well above the 1.0 threshold
+
+
+def test_math_density_low_for_prose_with_occasional_greek():
+    # Realistic prose length (~3000 chars) with one Greek mention — the
+    # "alpha level was 0.05" style. Should sit well under the 2.0 threshold.
+    prose = (
+        "The study followed a standard randomized-controlled design across "
+        "three cohorts recruited from partner clinics over the fiscal year. "
+        "Participants provided informed consent and completed the baseline "
+        "questionnaire in a supervised setting; missing responses were "
+        "handled via multiple imputation with ten iterations. The α level "
+        "was set to 0.05 for all pre-registered hypotheses, with a "
+        "Bonferroni correction applied for the secondary analyses. "
+        "Effect sizes are reported with 95% confidence intervals following "
+        "the recommendations of the reporting checklist. Adherence to the "
+        "protocol was verified by an independent monitor at each site. "
+    ) * 4
+    density = _math_density(prose)
+    assert density < 2.0, f"expected prose density < 2.0, got {density:.2f}"
+
+
+def test_math_density_handles_empty_string():
+    assert _math_density("") == 0.0
+
+
+def test_has_math_fonts_detects_paper_pdf():
+    data = FIXTURES.joinpath("paper.pdf").read_bytes()
+    found, font_name = _has_math_fonts(data)
+    assert found is True
+    # paper.pdf uses the rtxfonts / txfonts math family (common in physics
+    # papers). Assert on the broader family list our detector supports.
+    lower = font_name.lower()
+    assert any(m in lower for m in ("cmmi", "cmsy", "cmex", "rtxmi", "txsy", "txmi"))
+
+
+def test_detect_math_needed_positive_on_paper_pdf():
+    data = FIXTURES.joinpath("paper.pdf").read_bytes()
+    # Use pypdf's text as the density input (real auto-mode flow).
+    from alexandria.ingest.extract import _extract_pdf_pypdf
+    text, *_ = _extract_pdf_pypdf(data)
+    needs, reason = _detect_math_needed(data, text, threshold=1.0)
+    assert needs is True
+    assert reason  # non-empty explanation
+
+
+def test_detect_math_needed_escalates_empty_text():
+    needs, reason = _detect_math_needed(b"%PDF-1.4\n%stub", "", threshold=1.0)
+    assert needs is True
+    assert "empty" in reason.lower()
+
+
+@pytest.mark.skipif(
+    not _MARKER_AVAILABLE or os.environ.get("ALEXANDRIA_TEST_MARKER") != "1",
+    reason="marker backend test disabled; set ALEXANDRIA_TEST_MARKER=1 to enable",
+)
+def test_auto_mode_upgrades_math_pdf_to_marker(tmp_path: Path):
+    cfg = Config(
+        home=tmp_path,
+        extractors=ExtractorsConfig(
+            pdf=PdfExtractorConfig(backend="auto", device="auto"),
+        ),
+    )
+    data = FIXTURES.joinpath("paper.pdf").read_bytes()
+    result = extract(data, "pdf", cfg)
+    assert result.extractor.startswith("marker@")   # upgraded, not stuck on pypdf

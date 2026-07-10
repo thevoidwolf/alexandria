@@ -41,8 +41,12 @@ class CategoryRule:
 
 @dataclass(frozen=True)
 class PdfExtractorConfig:
-    backend: str = "pypdf"    # "pypdf" | "marker"
-    device: str = "auto"      # "auto" | "cuda" | "cpu" | "mps"
+    backend: str = "pypdf"                # "pypdf" | "marker" | "auto"
+    device: str = "auto"                  # "auto" | "cuda" | "cpu" | "mps"
+    math_symbol_threshold: float = 2.0    # per 1000 chars; consulted only in "auto"
+                                          # Prose with occasional Greek hits ~1.5;
+                                          # 2.0 leaves margin. Font-name signal
+                                          # catches LaTeX math regardless of density.
 
 
 @dataclass(frozen=True)

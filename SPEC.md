@@ -251,6 +251,8 @@ alexandria/
 5. **M5 — Polish.** Fixture corpus + tests, README with install/config, error surfaces reviewed.
 6. **M6 — Math-fidelity PDF backend.** Optional `marker` extractor (LaTeX-in-markdown output + surya OCR) selected via `[extractors.pdf] backend = "marker"`. Pypdf kept as fast default + robust fallback on marker failure. Server-primary deploy: install marker only where a GPU exists (`uv sync --extra marker`).
 7. **M7 — Network transport.** Streamable HTTP MCP transport with bearer-token auth so agents on other machines can hit the corpus on the GPU server. See §13.
+8. **M8 — Suki deploy.** Live on the A1000 server: `uv sync --extra marker` under Python 3.13, `[network] host="0.0.0.0"` + `allowed_hosts` for Tailscale reach, systemd `--user` unit. Not a code change; deploy-only.
+9. **M9 — Adaptive PDF backend.** `[extractors.pdf] backend = "auto"` routes per-doc: pypdf if fast-path is enough, marker when math is present. Two cheap signals: LaTeX-family font names in the resource dict (CM/LM/TX/RTX/STIX/XITS/MathJax) and Greek+operator density in pypdf's output (default threshold 2.0 per 1000 chars). Empty pypdf text → marker for OCR.
 
 ## 13. Network transport (M7)
 
