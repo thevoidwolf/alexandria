@@ -224,6 +224,26 @@ Ingest via `/api/upload` and `/api/ingest-url` is asynchronous: each file/URL
 becomes a `jobs` row, processed by a single background worker. If the server
 restarts mid-job, that row is swept to `error`; queued rows resume.
 
+### Curate
+
+- **Doc detail** (`/documents/{id}`) has an Edit button (rewrite category + tags,
+  with a datalist of existing categories) and a Delete button (native browser
+  confirm, cascade to chunks + FTS + vec + blob, redirect to `/documents`).
+- **`/taxonomy`** lists categories and tags with counts. Rename or delete inline;
+  rename into an existing target merges. Confirmation prompts warn about
+  affected doc counts.
+- All destructive operations are permanent — no undo.
+
+Same actions are available via MCP for agent-driven curation:
+
+```
+delete_document_tool(doc_id)              → {"deleted": true|false}
+rename_category_tool(old, new)            → {"affected": N}
+delete_category_tool(name)                → {"affected": N}
+rename_tag_tool(old, new)                 → {"affected": N}
+delete_tag_tool(name)                     → {"affected": N}
+```
+
 ### Deploy notes
 
 - `--no-auth` bypasses both the bearer check and the web password gate, for

@@ -12,11 +12,38 @@
   <div class="dim" style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px;">
     <a href="/documents" style="color: var(--dim);">← Documents</a>
   </div>
-  <h2 style="font-size: 22px; margin-top: 4px;">{{ display_title(doc) }}</h2>
-  <div style="margin-top: 8px;">
+  <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
+    <h2 style="font-size: 22px; margin-top: 4px; margin-bottom: 0;">{{ display_title(doc) }}</h2>
+    <div style="margin-left: auto; display: flex; gap: 8px;">
+      <button type="button" id="edit-btn" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px;">Edit</button>
+      <button type="button" id="delete-btn" class="linklike" style="background: transparent; color: var(--err); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px;">Delete</button>
+    </div>
+  </div>
+  <div id="meta-view" style="margin-top: 8px;">
     {% if doc.category %}<span class="chip">{{ doc.category }}</span>{% endif %}
     {% for t in doc.tags %}<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">{{ t }}</span>{% endfor %}
+    {% if not doc.category and not doc.tags %}<span class="dim" style="font-size: 13px;">no category, no tags</span>{% endif %}
   </div>
+  <form id="meta-edit" style="display: none; margin-top: 12px;">
+    <datalist id="known-categories">
+      {% for c in catalog.categories %}<option value="{{ c.name }}">{% endfor %}
+    </datalist>
+    <div class="row" style="align-items: end;">
+      <div>
+        <label class="dim" style="font-size: 12px;">Category</label>
+        <input type="text" id="edit-category" list="known-categories" value="{{ doc.category or '' }}">
+      </div>
+      <div>
+        <label class="dim" style="font-size: 12px;">Tags (comma-separated)</label>
+        <input type="text" id="edit-tags" value="{{ doc.tags|join(', ') }}">
+      </div>
+      <div style="flex: 0 0 auto; display: flex; gap: 8px;">
+        <button type="button" id="edit-save">Save</button>
+        <button type="button" id="edit-cancel" style="background: transparent; color: var(--dim); border: 1px solid var(--line);">Cancel</button>
+      </div>
+    </div>
+    <div id="edit-err" class="banner banner-error" style="display: none; margin-top: 10px;"></div>
+  </form>
 
   <div class="row" style="margin-top: 20px;">
     <div class="stat"><div class="k">Type</div><div class="v" style="font-size: 18px;">{{ doc.content_type }}</div></div>
@@ -77,6 +104,65 @@
     } catch (e) {
       body.textContent = 'Failed to load: ' + e.message;
     }
+  });
+
+  const editBtn    = document.getElementById('edit-btn');
+  const deleteBtn  = document.getElementById('delete-btn');
+  const view       = document.getElementById('meta-view');
+  const editForm   = document.getElementById('meta-edit');
+  const saveBtn    = document.getElementById('edit-save');
+  const cancelBtn  = document.getElementById('edit-cancel');
+  const errBox     = document.getElementById('edit-err');
+  const categoryEl = document.getElementById('edit-category');
+  const tagsEl     = document.getElementById('edit-tags');
+
+  editBtn.addEventListener('click', () => {
+    view.style.display = 'none';
+    editForm.style.display = '';
+    categoryEl.focus();
+  });
+  cancelBtn.addEventListener('click', () => {
+    editForm.style.display = 'none';
+    view.style.display = '';
+    errBox.style.display = 'none';
+  });
+  saveBtn.addEventListener('click', async () => {
+    errBox.style.display = 'none';
+    const category = categoryEl.value.trim();
+    const tags = tagsEl.value.split(',').map(t => t.trim()).filter(Boolean);
+    let r;
+    try {
+      r = await fetch('/api/documents/{{ doc.id }}', {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        body: JSON.stringify({ category: category || null, tags }),
+      });
+    } catch (e) {
+      errBox.textContent = 'Save failed: ' + e.message;
+      errBox.style.display = '';
+      return;
+    }
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      errBox.textContent = 'Save failed: ' + (j.error || ('HTTP ' + r.status));
+      errBox.style.display = '';
+      return;
+    }
+    location.reload();
+  });
+
+  deleteBtn.addEventListener('click', async () => {
+    if (!confirm('Permanently delete this document, its chunks, its blob, and its index entries? This cannot be undone.')) return;
+    const r = await fetch('/api/documents/{{ doc.id }}', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+    });
+    if (!r.ok) {
+      alert('Delete failed: HTTP ' + r.status);
+      return;
+    }
+    location.href = '/documents';
   });
 })();
 </script>

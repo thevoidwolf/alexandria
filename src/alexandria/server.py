@@ -16,6 +16,13 @@ from mcp.server.fastmcp import FastMCP
 
 from alexandria.catalog import get_catalog, get_document, list_documents
 from alexandria.config import Config, load as load_config
+from alexandria.curate import (
+    delete_category as _delete_category,
+    delete_document as _delete_document,
+    delete_tag as _delete_tag,
+    rename_category as _rename_category,
+    rename_tag as _rename_tag,
+)
 from alexandria.db import connect
 from alexandria.ingest import ingest_folder, ingest_url
 from alexandria.search import format_snippet_markdown, search
@@ -192,6 +199,69 @@ def get_catalog_tool() -> dict[str, Any]:
     with _lock:
         summary = get_catalog(conn)
     return asdict(summary)
+
+
+@mcp.tool()
+def delete_document_tool(doc_id: str) -> dict[str, Any]:
+    """Permanently delete a document, all its chunks, FTS/vec index rows, and blob.
+
+    Returns {"deleted": True} on success or {"deleted": False, "reason": ...} if
+    the document is unknown. Destructive: no undo.
+    """
+    cfg, conn = _get()
+    with _lock:
+        ok = _delete_document(doc_id, conn, cfg)
+    if not ok:
+        return {"deleted": False, "reason": "unknown doc_id"}
+    return {"deleted": True}
+
+
+@mcp.tool()
+def rename_category_tool(old: str, new: str) -> dict[str, Any]:
+    """Rename a category globally. If ``new`` already exists, documents merge under it.
+
+    Returns {"affected": N} — the number of documents whose category changed.
+    """
+    _, conn = _get()
+    with _lock:
+        n = _rename_category(old, new, conn)
+    return {"affected": n}
+
+
+@mcp.tool()
+def delete_category_tool(name: str) -> dict[str, Any]:
+    """Unset the category on every document that carries it.
+
+    Returns {"affected": N}.
+    """
+    _, conn = _get()
+    with _lock:
+        n = _delete_category(name, conn)
+    return {"affected": n}
+
+
+@mcp.tool()
+def rename_tag_tool(old: str, new: str) -> dict[str, Any]:
+    """Rename a tag globally. If any document already has ``new``, it's a no-op for that document (merge).
+
+    Returns {"affected": N} — the number of documents where the rename applied.
+    """
+    _, conn = _get()
+    with _lock:
+        n = _rename_tag(old, new, conn)
+    return {"affected": n}
+
+
+@mcp.tool()
+def delete_tag_tool(name: str) -> dict[str, Any]:
+    """Remove a tag from every document that carries it.
+
+    Returns {"affected": N}.
+    """
+    _, conn = _get()
+    with _lock:
+        n = _delete_tag(name, conn)
+    return {"affected": n}
 
 
 def run() -> None:

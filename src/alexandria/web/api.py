@@ -16,6 +16,14 @@ from ulid import ULID
 
 from alexandria.catalog import get_catalog, get_document, list_documents
 from alexandria.config import Config
+from alexandria.curate import (
+    delete_category,
+    delete_document,
+    delete_tag,
+    rename_category,
+    rename_tag,
+    update_document_metadata,
+)
 from alexandria.search import format_snippet_markdown, search
 from alexandria.web.jobs import JobQueue
 
@@ -306,12 +314,105 @@ def build_api_routes(
             },
         )
 
+    # ---- curate endpoints ------------------------------------------------
+
+    async def api_patch_document(request: Request) -> JSONResponse:
+        doc_id = request.path_params["doc_id"]
+        try:
+            body = await request.json()
+        except (ValueError, json.JSONDecodeError):
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "body must be an object"}, status_code=400)
+
+        # Sentinel: Ellipsis means "field absent"; None means "unset".
+        category: str | None | type(...) = ...
+        if "category" in body:
+            raw = body["category"]
+            if raw is not None and not isinstance(raw, str):
+                return JSONResponse({"error": "category must be a string or null"}, status_code=400)
+            if isinstance(raw, str) and not raw.strip():
+                category = None
+            else:
+                category = raw.strip() if isinstance(raw, str) else None
+
+        tags: list[str] | None = None
+        if "tags" in body:
+            raw_tags = body["tags"]
+            if isinstance(raw_tags, str):
+                tags = _split_tags(raw_tags)
+            elif isinstance(raw_tags, list):
+                tags = [str(t).strip() for t in raw_tags if str(t).strip()]
+            else:
+                return JSONResponse({"error": "tags must be a list or comma-separated string"}, status_code=400)
+
+        if category is ... and tags is None:
+            return JSONResponse({"error": "no fields to update"}, status_code=400)
+
+        with lock:
+            ok = update_document_metadata(doc_id, conn, category=category, tags=tags)
+        if not ok:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse({"ok": True})
+
+    async def api_delete_document(request: Request) -> JSONResponse:
+        doc_id = request.path_params["doc_id"]
+        with lock:
+            ok = delete_document(doc_id, conn, cfg)
+        if not ok:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse({"deleted": True})
+
+    async def api_rename_category(request: Request) -> JSONResponse:
+        old = request.path_params["name"]
+        try:
+            body = await request.json()
+        except (ValueError, json.JSONDecodeError):
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        new = (body.get("to") or "").strip() if isinstance(body, dict) else ""
+        if not new:
+            return JSONResponse({"error": "'to' is required"}, status_code=400)
+        with lock:
+            n = rename_category(old, new, conn)
+        return JSONResponse({"affected": n})
+
+    async def api_delete_category(request: Request) -> JSONResponse:
+        name = request.path_params["name"]
+        with lock:
+            n = delete_category(name, conn)
+        return JSONResponse({"affected": n})
+
+    async def api_rename_tag(request: Request) -> JSONResponse:
+        old = request.path_params["name"]
+        try:
+            body = await request.json()
+        except (ValueError, json.JSONDecodeError):
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        new = (body.get("to") or "").strip() if isinstance(body, dict) else ""
+        if not new:
+            return JSONResponse({"error": "'to' is required"}, status_code=400)
+        with lock:
+            n = rename_tag(old, new, conn)
+        return JSONResponse({"affected": n})
+
+    async def api_delete_tag(request: Request) -> JSONResponse:
+        name = request.path_params["name"]
+        with lock:
+            n = delete_tag(name, conn)
+        return JSONResponse({"affected": n})
+
     return [
         Route("/api/info", api_info, methods=["GET"]),
         Route("/api/catalog", api_catalog, methods=["GET"]),
         Route("/api/search", api_search, methods=["GET"]),
         Route("/api/documents", api_list_documents, methods=["GET"]),
         Route("/api/documents/{doc_id}", api_get_document, methods=["GET"]),
+        Route("/api/documents/{doc_id}", api_patch_document, methods=["PATCH"]),
+        Route("/api/documents/{doc_id}", api_delete_document, methods=["DELETE"]),
+        Route("/api/categories/{name}/rename", api_rename_category, methods=["POST"]),
+        Route("/api/categories/{name}", api_delete_category, methods=["DELETE"]),
+        Route("/api/tags/{name}/rename", api_rename_tag, methods=["POST"]),
+        Route("/api/tags/{name}", api_delete_tag, methods=["DELETE"]),
         Route("/api/upload", api_upload, methods=["POST"]),
         Route("/api/ingest-url", api_ingest_url, methods=["POST"]),
         Route("/api/jobs", api_list_jobs, methods=["GET"]),

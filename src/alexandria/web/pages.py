@@ -219,6 +219,7 @@ def build_page_routes(
         doc_id = request.path_params["doc_id"]
         with lock:
             doc = get_document(doc_id, conn, include_text=False)
+            catalog = get_catalog(conn) if doc else None
         if doc is None:
             return templates.TemplateResponse(request, "document.html", {
                 "authenticated": True,
@@ -229,6 +230,7 @@ def build_page_routes(
             "authenticated": True,
             "nav": "documents",
             "doc": doc,
+            "catalog": catalog,
         })
 
     async def page_login_get(request: Request) -> Response:
@@ -270,6 +272,15 @@ def build_page_routes(
         resp.delete_cookie(COOKIE_NAME, path="/")
         return resp
 
+    async def page_taxonomy(request: Request) -> Response:
+        with lock:
+            catalog = get_catalog(conn)
+        return templates.TemplateResponse(request, "taxonomy.html", {
+            "authenticated": True,
+            "nav": "taxonomy",
+            "catalog": catalog,
+        })
+
     return [
         Route("/", page_index, methods=["GET"]),
         Route("/login", page_login_get, methods=["GET"]),
@@ -278,4 +289,5 @@ def build_page_routes(
         Route("/search", page_search, methods=["GET"]),
         Route("/documents", page_list_documents, methods=["GET"]),
         Route("/documents/{doc_id}", page_document_detail, methods=["GET"]),
+        Route("/taxonomy", page_taxonomy, methods=["GET"]),
     ]
