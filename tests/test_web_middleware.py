@@ -19,6 +19,7 @@ def _stub() -> Starlette:
         routes=[
             Route("/mcp", ok, methods=["POST", "GET"]),
             Route("/api/ping", ok, methods=["GET"]),
+            Route("/files/{doc_id}", ok, methods=["GET"]),
             Route("/login", ok, methods=["GET", "POST"]),
         ]
     )
@@ -107,6 +108,62 @@ def test_api_rejects_expired_cookie(app_with_auth, secret):
     assert r.status_code == 401
 
 
+# ---- /files/<doc_id>: bearer, cookie, OR signed URL ------------------------
+
+
+def test_files_requires_auth(app_with_auth):
+    r = app_with_auth.get("/files/DOC")
+    assert r.status_code == 401
+
+
+def test_files_accepts_bearer(app_with_auth):
+    r = app_with_auth.get(
+        "/files/DOC", headers={"Authorization": "Bearer s3cret"}
+    )
+    assert r.status_code == 200
+
+
+def test_files_accepts_cookie(app_with_auth, secret):
+    cookie = issue_session(secret, max_age_seconds=60)
+    app_with_auth.cookies.set(COOKIE_NAME, cookie)
+    r = app_with_auth.get("/files/DOC")
+    assert r.status_code == 200
+
+
+def test_files_accepts_valid_signed_url(app_with_auth, secret):
+    from alexandria.web.signed_url import build_query
+
+    qs, _ = build_query(secret, "DOC", ttl_seconds=60)
+    r = app_with_auth.get(f"/files/DOC?{qs}")
+    assert r.status_code == 200
+
+
+def test_files_rejects_signed_url_for_wrong_doc(app_with_auth, secret):
+    from alexandria.web.signed_url import build_query
+
+    qs, _ = build_query(secret, "DOC", ttl_seconds=60)
+    r = app_with_auth.get(f"/files/OTHER?{qs}")
+    assert r.status_code == 401
+
+
+def test_files_rejects_expired_signed_url(app_with_auth, secret):
+    from alexandria.web.signed_url import sign
+
+    exp, sig = sign(secret, "DOC", ttl_seconds=1, now=1_000_000)
+    r = app_with_auth.get(f"/files/DOC?exp={exp}&sig={sig}")
+    assert r.status_code == 401
+
+
+def test_files_rejects_tampered_signature(app_with_auth, secret):
+    from alexandria.web.signed_url import build_query
+
+    qs, _ = build_query(secret, "DOC", ttl_seconds=60)
+    # Flip a couple of chars in the signature.
+    bad = qs.replace("sig=", "sig=AAAA")
+    r = app_with_auth.get(f"/files/DOC?{bad}")
+    assert r.status_code == 401
+
+
 # ---- open paths + no_auth bypass ------------------------------------------
 
 
@@ -120,3 +177,4 @@ def test_no_auth_lets_everything_through():
     with TestClient(app) as c:
         assert c.post("/mcp", json={}).status_code == 200
         assert c.get("/api/ping").status_code == 200
+        assert c.get("/files/DOC").status_code == 200

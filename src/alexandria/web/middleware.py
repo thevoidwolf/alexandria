@@ -3,6 +3,10 @@
 - ``/mcp`` and ``/mcp/*``       → require ``Authorization: Bearer <mcp-token>``
                                   (MCP spec compliance — no cookie fallback)
 - ``/api/*``                     → accept EITHER bearer OR valid session cookie
+- ``/files/<doc_id>``            → accept bearer, session cookie, OR a valid
+                                   ``?exp=...&sig=...`` HMAC-signed URL. Signed
+                                   URLs let the get_original MCP tool hand a
+                                   remote agent a self-contained fetchable link.
 - ``/login`` / ``/logout`` /     → anonymous OK (login handler does its own
   ``/static/*``                    password check)
 - everything else (page routes)  → require session cookie (bearer also honored
@@ -17,6 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, RedirectResponse
 
 from alexandria.web.auth import COOKIE_NAME, verify_session
+from alexandria.web.signed_url import verify as verify_signed_url
 
 _OPEN_PATHS = {"/login", "/logout"}
 
@@ -44,6 +49,8 @@ class SmartAuthMiddleware(BaseHTTPMiddleware):
             return await self._require_bearer(request, call_next)
         if path.startswith("/api/"):
             return await self._require_bearer_or_cookie(request, call_next)
+        if path.startswith("/files/"):
+            return await self._require_bearer_cookie_or_signed(request, call_next, path)
         if path in _OPEN_PATHS or path.startswith("/static/"):
             return await call_next(request)
         return await self._require_session_or_redirect(request, call_next)
@@ -89,3 +96,33 @@ class SmartAuthMiddleware(BaseHTTPMiddleware):
         if ok is True or (ok is None and self._cookie_ok(request)):
             return await call_next(request)
         return RedirectResponse(url="/login", status_code=303)
+
+    def _signed_url_ok(self, request, path: str) -> bool:
+        """Verify a ``/files/<doc_id>?exp=...&sig=...`` signed URL.
+
+        Missing exp/sig → not a signed-URL attempt (return False, let the
+        caller fall back to bearer/cookie). Present-but-invalid → False.
+        """
+        exp = request.query_params.get("exp")
+        sig = request.query_params.get("sig")
+        if not exp or not sig or not self._session_secret:
+            return False
+        # path == "/files/<doc_id>" — anything past a second slash isn't ours.
+        rest = path[len("/files/"):]
+        if not rest or "/" in rest:
+            return False
+        return verify_signed_url(self._session_secret, rest, exp, sig)
+
+    async def _require_bearer_cookie_or_signed(self, request, call_next, path: str):
+        if self._signed_url_ok(request, path):
+            return await call_next(request)
+        ok = self._bearer_ok(request)
+        if ok is True:
+            return await call_next(request)
+        if ok is False:
+            return JSONResponse({"error": "invalid token"}, status_code=401)
+        if self._cookie_ok(request):
+            return await call_next(request)
+        return JSONResponse(
+            {"error": "authentication required"}, status_code=401
+        )

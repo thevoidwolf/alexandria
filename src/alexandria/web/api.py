@@ -1,4 +1,10 @@
-"""JSON endpoints under /api/* for the browser UI (and curl scripting)."""
+"""JSON endpoints under /api/* for the browser UI (and curl scripting).
+
+Also serves ``GET /files/<doc_id>``, the original content-addressed blob
+route used by the "Open original" UI button and the ``get_original`` MCP
+tool. That route lives here (not under /api/*) so it can be linked in
+plain HTML and stitched into shareable signed URLs.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -8,9 +14,10 @@ import threading
 from dataclasses import asdict
 from importlib import metadata as importlib_metadata
 from pathlib import Path
+from urllib.parse import quote
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
 from ulid import ULID
 
@@ -23,6 +30,12 @@ from alexandria.curate import (
     rename_category,
     rename_tag,
     update_document_metadata,
+)
+from alexandria.originals import (
+    blob_path,
+    filename_from_source,
+    lookup_blob_for,
+    mime_for,
 )
 from alexandria.search import format_snippet_markdown, search
 from alexandria.web.jobs import JobQueue
@@ -50,6 +63,12 @@ def _sanitize_filename(name: str) -> str:
 
 def _sse_format(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _rfc5987(value: str) -> str:
+    """Percent-encode a filename for a Content-Disposition filename* param."""
+    return quote(value, safe="")
+
 
 
 def build_api_routes(
@@ -401,6 +420,50 @@ def build_api_routes(
             n = delete_tag(name, conn)
         return JSONResponse({"affected": n})
 
+    # ---- original-file endpoint ----------------------------------------
+
+    async def api_get_original(request: Request) -> "JSONResponse | FileResponse":
+        doc_id = request.path_params["doc_id"]
+        download = (request.query_params.get("download") or "").lower() in (
+            "1", "true", "yes"
+        )
+        with lock:
+            info = lookup_blob_for(conn, doc_id)
+        if info is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        sha, ctype, src_uri = info
+
+        if not cfg.storage.keep_blobs:
+            return JSONResponse(
+                {"error": "original not retained (storage.keep_blobs = false)"},
+                status_code=404,
+            )
+        blob = blob_path(cfg, sha)
+        if not blob.exists():
+            return JSONResponse(
+                {"error": "original blob missing on disk"},
+                status_code=404,
+            )
+
+        filename = filename_from_source(src_uri, ctype, doc_id)
+        disposition = "attachment" if download else "inline"
+        # RFC 5987: filename* for non-ASCII names; plain filename is a fallback
+        # for ancient clients. Starlette's FileResponse sets Content-Disposition
+        # itself, so we bypass it by using the low-level headers path.
+        safe_ascii = filename.encode("ascii", "replace").decode("ascii").replace('"', "")
+        headers = {
+            "Content-Disposition": (
+                f'{disposition}; filename="{safe_ascii}"; '
+                f"filename*=UTF-8''{_rfc5987(filename)}"
+            ),
+            "Cache-Control": "private, max-age=0, must-revalidate",
+        }
+        return FileResponse(
+            path=str(blob),
+            media_type=mime_for(ctype),
+            headers=headers,
+        )
+
     return [
         Route("/api/info", api_info, methods=["GET"]),
         Route("/api/catalog", api_catalog, methods=["GET"]),
@@ -419,4 +482,5 @@ def build_api_routes(
         Route("/api/jobs/stream", api_jobs_stream, methods=["GET"]),
         Route("/api/jobs/{job_id}", api_get_job, methods=["GET"]),
         Route("/api/jobs/{job_id}/cancel", api_cancel_job, methods=["POST"]),
+        Route("/files/{doc_id}", api_get_original, methods=["GET"]),
     ]

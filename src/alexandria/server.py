@@ -14,6 +14,8 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from datetime import datetime, timezone
+
 from alexandria.catalog import get_catalog, get_document, list_documents
 from alexandria.config import Config, load as load_config
 from alexandria.curate import (
@@ -25,6 +27,12 @@ from alexandria.curate import (
 )
 from alexandria.db import connect
 from alexandria.ingest import ingest_folder, ingest_url
+from alexandria.originals import (
+    blob_path,
+    filename_from_source,
+    lookup_blob_for,
+    mime_for,
+)
 from alexandria.search import format_snippet_markdown, search
 
 _cfg: Config | None = None
@@ -214,6 +222,104 @@ def delete_document_tool(doc_id: str) -> dict[str, Any]:
     if not ok:
         return {"deleted": False, "reason": "unknown doc_id"}
     return {"deleted": True}
+
+
+_LOOPBACK_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
+
+
+def _resolve_public_base_url(cfg: Config) -> str | None:
+    """Full URL prefix (no trailing slash) to prepend to /files/... links.
+
+    Order:
+    1. ``[network] public_base_url`` if set — the honest answer for
+       Tailscale / LAN / reverse-proxy deploys.
+    2. ``http://<host>:<port>`` only when host is loopback — fine for dev.
+    3. None otherwise, since we can't guess a routable name for 0.0.0.0
+       or a non-loopback bind. Caller should surface this to the user.
+    """
+    if cfg.network.public_base_url:
+        return cfg.network.public_base_url.rstrip("/")
+    if cfg.network.host in _LOOPBACK_HOSTNAMES:
+        return f"http://{cfg.network.host}:{cfg.network.port}"
+    return None
+
+
+@mcp.tool()
+def get_original_tool(
+    doc_id: str, ttl_seconds: int = 3600
+) -> dict[str, Any]:
+    """Get a fetchable link (and local path) for a document's original file.
+
+    Useful when the extracted text is ambiguous and the caller needs to
+    consult the source directly. Blobs are content-addressed by sha256 and
+    kept by default (``storage.keep_blobs = true``).
+
+    Args:
+        doc_id: The document id (as returned by ``search``/``list_documents``).
+        ttl_seconds: How long the signed URL should stay valid. Clamped to
+            [1, 86400]. Defaults to 3600 (1 hour).
+
+    Returns:
+        ``{"found": True, "filename", "content_type", "bytes", "url",
+        "expires_at", "path", "url_unavailable_reason"}``
+        or ``{"found": False, "reason": ...}`` if the document/blob is gone.
+
+        ``url`` is null when ``[network] public_base_url`` isn't set and the
+        server isn't on loopback — set that config knob to enable remote
+        fetching. ``path`` is a local filesystem path, useful only for MCP
+        clients on the same host as the server.
+    """
+    from alexandria.web.auth import get_or_create_session_secret
+    from alexandria.web.signed_url import clamp_ttl, sign
+
+    cfg, conn = _get()
+    with _lock:
+        info = lookup_blob_for(conn, doc_id)
+    if info is None:
+        return {"found": False, "reason": "unknown doc_id"}
+
+    sha, ctype, src_uri = info
+    if not cfg.storage.keep_blobs:
+        return {"found": False, "reason": "original not retained (storage.keep_blobs = false)"}
+    blob = blob_path(cfg, sha)
+    if not blob.exists():
+        return {"found": False, "reason": "original blob missing on disk"}
+
+    filename = filename_from_source(src_uri, ctype, doc_id)
+    size = blob.stat().st_size
+
+    base = _resolve_public_base_url(cfg)
+    url: str | None = None
+    expires_at: str | None = None
+    url_unavailable_reason: str | None = None
+
+    if not cfg.web.enabled:
+        url_unavailable_reason = (
+            "web routes disabled ([web] enabled = false); use the local path"
+        )
+    elif base is None:
+        url_unavailable_reason = (
+            "no public URL: set [network] public_base_url to your reachable "
+            "hostname (e.g. https://alexandria.suki.tail-net.ts)"
+        )
+    else:
+        secret = get_or_create_session_secret(cfg)
+        exp, sig = sign(secret, doc_id, ttl_seconds=clamp_ttl(ttl_seconds))
+        url = f"{base}/files/{doc_id}?exp={exp}&sig={sig}"
+        expires_at = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat(
+            timespec="seconds"
+        )
+
+    return {
+        "found": True,
+        "filename": filename,
+        "content_type": mime_for(ctype),
+        "bytes": size,
+        "url": url,
+        "expires_at": expires_at,
+        "path": str(blob),
+        "url_unavailable_reason": url_unavailable_reason,
+    }
 
 
 @mcp.tool()

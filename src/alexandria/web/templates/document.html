@@ -15,6 +15,8 @@
   <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
     <h2 style="font-size: 22px; margin-top: 4px; margin-bottom: 0;">{{ display_title(doc) }}</h2>
     <div style="margin-left: auto; display: flex; gap: 8px;">
+      <a href="/files/{{ doc.id }}" target="_blank" rel="noopener" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px; text-decoration: none;">Open original</a>
+      <a href="/files/{{ doc.id }}?download=1" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px; text-decoration: none;">Download</a>
       <button type="button" id="edit-btn" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px;">Edit</button>
       <button type="button" id="delete-btn" class="linklike" style="background: transparent; color: var(--err); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px;">Delete</button>
     </div>

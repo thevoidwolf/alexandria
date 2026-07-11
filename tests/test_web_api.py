@@ -100,3 +100,52 @@ def test_search_returns_hits(client):
     for h in hits:
         assert {"chunk_id", "doc_id", "score", "snippet", "title",
                 "category", "tags", "source_uri", "content_type"} <= h.keys()
+
+
+# ---- /files/<doc_id> --------------------------------------------------------
+
+
+def _first_doc_id(client) -> str:
+    return client.get("/api/documents").json()[0]["id"]
+
+
+def test_files_inline_serves_blob(client, corpus_dir):
+    doc_id = _first_doc_id(client)
+    r = client.get(f"/files/{doc_id}")
+    assert r.status_code == 200
+    # inline disposition + a filename hint
+    disp = r.headers["content-disposition"]
+    assert disp.startswith("inline;")
+    assert "filename=" in disp
+    # content-type reflects the extractor content_type (txt or md)
+    assert r.headers["content-type"].startswith(("text/plain", "text/markdown"))
+    # body matches the on-disk fixture bytes we ingested
+    # (the seeded ingest ordered plain.txt first)
+    fixture = (corpus_dir / "plain.txt").read_bytes()
+    assert r.content == fixture
+
+
+def test_files_download_flag_sets_attachment(client):
+    doc_id = _first_doc_id(client)
+    r = client.get(f"/files/{doc_id}?download=1")
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith("attachment;")
+
+
+def test_files_unknown_doc_returns_404(client):
+    r = client.get("/files/nope")
+    assert r.status_code == 404
+    assert r.json()["error"] == "not found"
+
+
+def test_files_missing_blob_returns_404(client, cfg, seeded_conn):
+    from alexandria.originals import blob_path, lookup_blob_for
+
+    doc_id = _first_doc_id(client)
+    info = lookup_blob_for(seeded_conn, doc_id)
+    assert info is not None
+    blob_path(cfg, info[0]).unlink()
+
+    r = client.get(f"/files/{doc_id}")
+    assert r.status_code == 404
+    assert "missing" in r.json()["error"]

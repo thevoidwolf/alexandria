@@ -71,6 +71,11 @@ class NetworkConfig:
                                              # (network-visible IPs, MagicDNS names,
                                              # reverse-proxy hostnames). Loopback is
                                              # always allowed.
+    public_base_url: str | None = None       # e.g. "https://alexandria.suki.tail-net.ts".
+                                             # Used to build shareable signed-URL
+                                             # responses for get_original. When unset,
+                                             # falls back to "http://<host>:<port>" only
+                                             # if host is loopback.
 
 
 @dataclass(frozen=True)
