@@ -32,11 +32,14 @@ def test_empty_query_returns_empty(seeded):
 
 
 def test_fts_mode_finds_exact_token(seeded):
+    from alexandria.search import SNIPPET_MARK_END, SNIPPET_MARK_START
+
     cfg, conn = seeded
     hits = search("BM25", conn, cfg, mode="fts")
     assert hits, "FTS should match BM25"
-    # Snippet from FTS includes the highlighted term.
-    assert any("[BM25]" in h.snippet for h in hits)
+    # Snippet from FTS wraps the matched term in the PUA sentinels.
+    marked = f"{SNIPPET_MARK_START}BM25{SNIPPET_MARK_END}"
+    assert any(marked in h.snippet for h in hits)
 
 
 def test_vec_mode_handles_paraphrase(seeded):

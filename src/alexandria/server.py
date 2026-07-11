@@ -18,7 +18,7 @@ from alexandria.catalog import get_catalog, get_document, list_documents
 from alexandria.config import Config, load as load_config
 from alexandria.db import connect
 from alexandria.ingest import ingest_folder, ingest_url
-from alexandria.search import search
+from alexandria.search import format_snippet_markdown, search
 
 _cfg: Config | None = None
 _conn = None
@@ -130,7 +130,7 @@ def search_tool(
             "chunk_id": h.chunk_id,
             "doc_id": h.doc_id,
             "score": h.score,
-            "snippet": h.snippet,
+            "snippet": format_snippet_markdown(h.snippet),
             "title": h.title,
             "category": h.category,
             "tags": h.tags,

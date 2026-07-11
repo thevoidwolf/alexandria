@@ -104,12 +104,31 @@
       text-transform: uppercase; letter-spacing: 0.05em; font-size: 11px;
     }
     table.jobs td.status { font-size: 12px; }
-    .status-queued    { color: var(--dim); }
-    .status-running   { color: var(--warn); font-weight: 500; }
-    .status-done      { color: var(--ok); }
-    .status-error     { color: var(--err); }
-    .status-cancelled { color: var(--dim); text-decoration: line-through; }
+    td.status span.pill, span.status-pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: lowercase;
+      letter-spacing: 0.02em;
+    }
+    .status-queued    span.pill { background: #eee7d9; color: var(--dim); }
+    .status-running   span.pill { background: #fdecc8; color: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+    .status-done      span.pill { background: #dcecd7; color: var(--ok); }
+    .status-error     span.pill { background: #f7d9d5; color: var(--err); }
+    .status-cancelled span.pill { background: #e8e4de; color: var(--dim); text-decoration: line-through; }
+    @keyframes pulse { 50% { opacity: 0.55; } }
     .empty { color: var(--dim); font-style: italic; padding: 12px 0; }
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .banner {
+      padding: 10px 14px;
+      border-radius: 4px;
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+    .banner-error { background: #fde8e6; color: var(--err); }
+    .banner-ok    { background: #e6f2e2; color: var(--ok); }
     button, input[type=submit] {
       background: var(--ink); color: var(--bg);
       border: 0; border-radius: 4px; padding: 10px 18px;
@@ -130,6 +149,23 @@
       color: var(--dim); font-size: 12px;
     }
     footer.site .mono { color: var(--dim); }
+
+    @media (max-width: 640px) {
+      header.site .inner { flex-wrap: wrap; padding: 12px 14px; gap: 10px; }
+      header.site h1 { font-size: 19px; }
+      header.site nav { margin-left: 0; width: 100%; justify-content: flex-start; gap: 12px; }
+      main { padding: 16px 12px 48px; }
+      .card { padding: 14px; }
+      .card + .card { margin-top: 12px; }
+      h2 { font-size: 16px; }
+      .row { gap: 12px; }
+      .row > * { flex-basis: 45%; }
+      .stat .v { font-size: 20px; }
+      table.jobs { font-size: 12px; }
+      table.jobs th, table.jobs td { padding: 6px 6px; }
+      #drop { padding: 26px 12px !important; }
+      footer.site { padding: 14px; }
+    }
   </style>
 </head>
 <body>

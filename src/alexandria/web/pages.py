@@ -16,7 +16,7 @@ from starlette.templating import Jinja2Templates
 
 from alexandria.catalog import get_catalog, get_document, list_documents
 from alexandria.config import Config
-from alexandria.search import search
+from alexandria.search import SNIPPET_MARK_END, SNIPPET_MARK_START, search
 from alexandria.web.auth import (
     COOKIE_NAME,
     issue_session,
@@ -52,15 +52,45 @@ def _describe_job(j) -> str:
     return j.kind
 
 
-def _highlight_snippet(s: str) -> str:
-    """Turn FTS5 snippet delimiters into <mark> tags.
+def _display_title(d) -> str:
+    """Prefer the document title; fall back to the source URI basename.
 
-    ``search()`` calls ``snippet(..., '[', ']', ...)``. We HTML-escape first,
-    then swap the delimiters. Literal '[' or ']' in the source text get
-    mangled — acceptable tradeoff for W4; W5 polish can pick sentinel chars.
+    Documents ingested via the browser have title=None almost always (text
+    files rarely carry titles); ``upload:foo.pdf`` becomes just ``foo.pdf``,
+    which reads better than "untitled pdf".
+    """
+    title = getattr(d, "title", None)
+    if title:
+        return title
+    uri = getattr(d, "source_uri", None)
+    if not uri:
+        sources = getattr(d, "sources", None)
+        if sources:
+            first = sources[0]
+            uri = first.get("source_uri") if isinstance(first, dict) else getattr(first, "source_uri", None)
+    if uri:
+        if uri.startswith("upload:"):
+            base = uri.split(":", 1)[1]
+        else:
+            base = uri.rsplit("/", 1)[-1]
+        if base:
+            return base
+    ctype = getattr(d, "content_type", "doc")
+    return f"untitled {ctype}"
+
+
+def _highlight_snippet(s: str) -> str:
+    """Turn PUA snippet sentinels into <mark> tags.
+
+    Escape first, then swap the sentinels. Since the sentinels are PUA chars
+    they can't appear in the source text, so this is lossless.
     """
     escaped = html.escape(s)
-    return escaped.replace("[", "<mark>").replace("]", "</mark>")
+    return (
+        escaped
+        .replace(SNIPPET_MARK_START, "<mark>")
+        .replace(SNIPPET_MARK_END, "</mark>")
+    )
 
 
 def _split_tags(raw: str | None) -> list[str]:
@@ -99,6 +129,7 @@ def build_page_routes(
     templates.env.globals["describe_job"] = _describe_job
     templates.env.globals["job_detail"] = _job_detail
     templates.env.globals["highlight_snippet"] = _highlight_snippet
+    templates.env.globals["display_title"] = _display_title
 
     cookie_max_age = cfg.web.session_max_age_days * 86400
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{% if doc %}{{ doc.title or ('untitled ' + doc.content_type) }}{% else %}Not found{% endif %} — {{ title }}{% endblock %}
+{% block title %}{% if doc %}{{ display_title(doc) }}{% else %}Not found{% endif %} — {{ title }}{% endblock %}
 {% block main %}
 {% if not doc %}
 <div class="card">
@@ -12,7 +12,7 @@
   <div class="dim" style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px;">
     <a href="/documents" style="color: var(--dim);">← Documents</a>
   </div>
-  <h2 style="font-size: 22px; margin-top: 4px;">{{ doc.title or ('untitled ' + doc.content_type) }}</h2>
+  <h2 style="font-size: 22px; margin-top: 4px;">{{ display_title(doc) }}</h2>
   <div style="margin-top: 8px;">
     {% if doc.category %}<span class="chip">{{ doc.category }}</span>{% endif %}
     {% for t in doc.tags %}<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">{{ t }}</span>{% endfor %}

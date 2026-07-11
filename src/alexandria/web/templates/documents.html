@@ -27,30 +27,32 @@
   {% if not docs %}
     <div class="empty">No documents match.</div>
   {% else %}
-  <table class="jobs">
-    <thead>
-      <tr>
-        <th>Title</th>
-        <th>Type</th>
-        <th>Category</th>
-        <th>Tags</th>
-        <th style="text-align: right;">Bytes</th>
-        <th>Ingested</th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for d in docs %}
-      <tr>
-        <td><a href="/documents/{{ d.id }}">{{ d.title or ('untitled ' + d.content_type) }}</a></td>
-        <td class="dim">{{ d.content_type }}</td>
-        <td>{% if d.category %}<span class="chip">{{ d.category }}</span>{% endif %}</td>
-        <td>{% for t in d.tags %}<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">{{ t }}</span>{% endfor %}</td>
-        <td style="text-align: right;" class="mono">{{ human_bytes(d.bytes) }}</td>
-        <td class="mono dim">{{ d.ingested_at }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
+  <div class="table-scroll">
+    <table class="jobs">
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Type</th>
+          <th>Category</th>
+          <th>Tags</th>
+          <th style="text-align: right;">Bytes</th>
+          <th>Ingested</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for d in docs %}
+        <tr>
+          <td><a href="/documents/{{ d.id }}">{{ display_title(d) }}</a></td>
+          <td class="dim">{{ d.content_type }}</td>
+          <td>{% if d.category %}<span class="chip">{{ d.category }}</span>{% endif %}</td>
+          <td>{% for t in d.tags %}<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">{{ t }}</span>{% endfor %}</td>
+          <td style="text-align: right;" class="mono">{{ human_bytes(d.bytes) }}</td>
+          <td class="mono dim">{{ d.ingested_at }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
   <div style="display: flex; justify-content: space-between; margin-top: 16px; font-size: 13px;">
     {% if prev_offset is not none %}
       <a href="{{ page_url(prev_offset) }}">← Previous</a>

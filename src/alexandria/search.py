@@ -13,6 +13,13 @@ SearchMode = Literal["hybrid", "fts", "vec"]
 # RRF constant. Anserini's default; robust across corpora, no tuning knob.
 RRF_K = 60
 
+# Snippet highlight markers. Private-Use Area chars — safe because they can't
+# appear in real text, so consumers can round-trip the snippet through their
+# preferred format (markdown, HTML) without ever colliding with document
+# content. Prior versions used '[' and ']' which mangled literal brackets.
+SNIPPET_MARK_START = "\uE000"
+SNIPPET_MARK_END = "\uE001"
+
 
 @dataclass(frozen=True)
 class SearchHit:
@@ -77,7 +84,7 @@ def _fts_search(
 
     sql = (
         "SELECT rowid, chunk_id, doc_id, "
-        "snippet(chunks_fts, 2, '[', ']', '...', 12) "
+        f"snippet(chunks_fts, 2, '{SNIPPET_MARK_START}', '{SNIPPET_MARK_END}', '…', 12) "
         "FROM chunks_fts WHERE chunks_fts MATCH ?"
     )
     params: list = [query]
@@ -149,6 +156,16 @@ def _load_tags(conn: sqlite3.Connection, doc_id: str) -> list[str]:
             "SELECT tag FROM tags WHERE doc_id = ? ORDER BY tag", (doc_id,)
         )
     ]
+
+
+def format_snippet_markdown(s: str) -> str:
+    """Turn PUA highlight sentinels into Markdown bold markers."""
+    return s.replace(SNIPPET_MARK_START, "**").replace(SNIPPET_MARK_END, "**")
+
+
+def format_snippet_plain(s: str) -> str:
+    """Strip PUA highlight sentinels entirely."""
+    return s.replace(SNIPPET_MARK_START, "").replace(SNIPPET_MARK_END, "")
 
 
 def _rrf(rankings: list[list[int]]) -> dict[int, float]:

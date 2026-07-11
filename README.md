@@ -160,6 +160,78 @@ Or expose only inside a mesh network (Tailscale/WireGuard) and skip TLS
 altogether — `--no-auth` is reasonable there since the mesh already gates
 access.
 
+## Web UI
+
+Alexandria ships with a browser UI that co-hosts on the same ASGI app as
+`mcp-http` — one port, one systemd unit, one auth strategy split between two
+credentials (the MCP bearer token stays; the web password is separate).
+
+### Enable
+
+The web UI is on by default whenever `alexandria mcp-http` runs. Set a password
+before first browser access:
+
+```sh
+alexandria set-web-password        # prompts twice; writes chmod-600 bcrypt hash
+```
+
+Then visit `http://<host>:8765/` and log in. Nothing further is needed on the
+MCP client side — the MCP bearer token and the web password are independent.
+
+### What's there
+
+- **`/`** — landing: catalog totals, drop zone for multi-file upload (PDF /
+  HTML / TXT / MD), live activity feed of ingest jobs.
+- **`/search`** — hybrid FTS + vector search, filterable by category and tags.
+  Hit cards link into the doc detail page. FTS matches are highlighted with
+  `<mark>` in the UI and `**…**` in the JSON/MCP API.
+- **`/documents`** — filterable, paginated document browser.
+- **`/documents/{id}`** — full metadata, sources, tags, and a lazy-loaded
+  "Show extracted text" panel.
+
+### Config
+
+```toml
+[web]
+enabled = true          # set to false to disable page routes entirely
+title = "Alexandria"    # shown in header + page title
+max_upload_mb = 100     # per-file cap; larger uploads get 413
+password_hash_file = ""   # default: $ALEXANDRIA_HOME/web_password_hash
+session_secret_file = ""  # default: $ALEXANDRIA_HOME/session_secret (auto-generated)
+session_max_age_days = 30
+```
+
+### API surface (browser-side, not MCP)
+
+`/api/*` accepts EITHER the MCP bearer token (for curl scripting) OR a valid
+`alx_session` cookie (for the browser). Endpoints:
+
+```
+GET    /api/info                     server + model info
+GET    /api/catalog                  totals + facets
+GET    /api/search?q=…               same shape as MCP search_tool
+GET    /api/documents                filterable, paged
+GET    /api/documents/{id}           optional ?include_text=true
+POST   /api/upload                   multipart files[] + category + tags
+POST   /api/ingest-url               {url, category, tags}
+GET    /api/jobs                     recent job rows
+GET    /api/jobs/{id}
+POST   /api/jobs/{id}/cancel
+GET    /api/jobs/stream              SSE stream of status transitions
+```
+
+Ingest via `/api/upload` and `/api/ingest-url` is asynchronous: each file/URL
+becomes a `jobs` row, processed by a single background worker. If the server
+restarts mid-job, that row is swept to `error`; queued rows resume.
+
+### Deploy notes
+
+- `--no-auth` bypasses both the bearer check and the web password gate, for
+  trusted-network deploys (Tailscale, WireGuard, LAN). The safety rail still
+  refuses non-loopback binds without either an auth token or `--no-auth`.
+- The web UI expects same-port coexistence with `/mcp`. If you're reverse-
+  proxying, path both `/mcp` and `/` to the same upstream.
+
 ## Development
 
 ```sh
