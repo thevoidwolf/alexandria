@@ -252,40 +252,57 @@ def build_http_app(
     no_auth: bool,
     inner=None,
     allowed_hosts: tuple[str, ...] = (),
+    *,
+    cfg: Config | None = None,
+    conn=None,
+    lock: threading.Lock | None = None,
 ):
-    """Return the Streamable HTTP MCP app, wrapped with bearer-token auth.
+    """Return the Streamable HTTP MCP app, wrapped with path-aware auth.
 
     `inner` lets tests inject a stub Starlette app; production callers omit it
     and get the real FastMCP streamable-http app. The FastMCP singleton's
     session manager can only be started once per process, so tests must not
     reuse the real one.
+
+    When `cfg` is provided and `cfg.web.enabled`, browser-facing `/api/*`
+    routes are mounted on the same ASGI app and gated by cookie-or-bearer
+    auth. `/mcp` keeps bearer-only for MCP spec compliance.
     """
-    from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.responses import JSONResponse
-
-    class BearerAuthMiddleware(BaseHTTPMiddleware):
-        def __init__(self, app, expected: str) -> None:
-            super().__init__(app)
-            self._expected = expected
-
-        async def dispatch(self, request, call_next):
-            hdr = request.headers.get("authorization", "")
-            if not hdr.startswith("Bearer "):
-                return JSONResponse(
-                    {"error": "missing bearer token"}, status_code=401
-                )
-            if hdr[7:].strip() != self._expected:
-                return JSONResponse({"error": "invalid token"}, status_code=401)
-            return await call_next(request)
+    from alexandria.web.middleware import SmartAuthMiddleware
 
     if inner is None:
         _extend_allowed_hosts(allowed_hosts)
         app = mcp.streamable_http_app()
     else:
         app = inner
-    if not no_auth:
-        assert auth_token, "build_http_app: auth_token required when no_auth=False"
-        app.add_middleware(BearerAuthMiddleware, expected=auth_token)
+
+    session_secret: bytes | None = None
+    if cfg is not None and cfg.web.enabled and conn is not None and lock is not None:
+        import atexit
+
+        from alexandria.web.api import build_api_routes
+        from alexandria.web.auth import get_or_create_session_secret
+        from alexandria.web.jobs import JobQueue
+        from alexandria.web.pages import build_page_routes
+
+        job_queue = JobQueue(cfg, conn, lock)
+        job_queue.start()
+        atexit.register(job_queue.stop)
+
+        session_secret = get_or_create_session_secret(cfg)
+        for route in build_api_routes(cfg, conn, lock, jobs=job_queue):
+            app.router.routes.append(route)
+        for route in build_page_routes(
+            cfg, session_secret, conn, lock, jobs=job_queue
+        ):
+            app.router.routes.append(route)
+
+    app.add_middleware(
+        SmartAuthMiddleware,
+        mcp_token=auth_token,
+        session_secret=session_secret,
+        no_auth=no_auth,
+    )
     return app
 
 
@@ -306,8 +323,13 @@ def run_http(
         )
     import uvicorn
 
+    cfg, conn = _get()
     uvicorn.run(
-        build_http_app(auth_token, no_auth, allowed_hosts=allowed_hosts),
+        build_http_app(
+            auth_token, no_auth,
+            allowed_hosts=allowed_hosts,
+            cfg=cfg, conn=conn, lock=_lock,
+        ),
         host=host,
         port=port,
     )

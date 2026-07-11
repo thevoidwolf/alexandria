@@ -28,6 +28,12 @@ dependencies = [
     "mcp>=1.2",
     # ASGI server for the Streamable HTTP MCP transport (starlette comes via mcp)
     "uvicorn>=0.30",
+    # Web UI password hashing
+    "bcrypt>=4.2",
+    # Web UI templates
+    "jinja2>=3.1",
+    # Web UI multipart uploads
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]

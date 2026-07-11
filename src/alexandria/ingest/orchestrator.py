@@ -101,6 +101,7 @@ def ingest_fetched(
     cfg: Config,
     category: str | None = None,
     tags: list[str] | None = None,
+    filename_hint: str | None = None,
 ) -> IngestResult:
     tags = tags or []
 
@@ -118,7 +119,12 @@ def ingest_fetched(
         return IngestResult(existing, True, "raw", None, "", 0)
 
     # Extract
-    filename = Path(fetched.source_uri).name if fetched.source_kind == "file" else None
+    if filename_hint:
+        filename = filename_hint
+    elif fetched.source_kind == "file":
+        filename = Path(fetched.source_uri).name
+    else:
+        filename = None
     ctype = detect_content_type(fetched.data, fetched.content_type_hint, filename)
     ex = extract(fetched.data, ctype, cfg)
     if not ex.text.strip():

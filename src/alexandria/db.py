@@ -5,7 +5,7 @@ from pathlib import Path
 
 import sqlite_vec
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -77,6 +77,20 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     text,
     tokenize='porter unicode61'
 );
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,          -- 'upload' | 'url' | 'folder'
+    status      TEXT NOT NULL,          -- 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    input       TEXT NOT NULL,          -- json blob (filename, category, tags, ...)
+    result      TEXT,                   -- json blob (IngestResult on success)
+    error       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_created_desc  ON jobs(created_at DESC);
 """
 
 
@@ -114,8 +128,14 @@ def connect(db_path: Path, embed_dim: int) -> sqlite3.Connection:
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     if row is None:
         conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
-    elif row[0] != SCHEMA_VERSION:
+    elif row[0] == SCHEMA_VERSION:
+        pass
+    elif row[0] < SCHEMA_VERSION:
+        # v1 → v2 was purely additive (jobs table). The IF NOT EXISTS above
+        # already created it; just bump the stamp.
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    else:
         raise RuntimeError(
-            f"DB schema version {row[0]} does not match code version {SCHEMA_VERSION}"
+            f"DB schema version {row[0]} is newer than code version {SCHEMA_VERSION}"
         )
     return conn

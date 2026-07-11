@@ -240,6 +240,32 @@ def _resolve_token(
     return None
 
 
+@app.command("set-web-password")
+def set_web_password_cmd() -> None:
+    """Set (or reset) the password for the web UI login.
+
+    Prompts twice, bcrypt-hashes the input, and writes chmod-600 to
+    `[web] password_hash_file` (default `$ALEXANDRIA_HOME/web_password_hash`).
+    """
+    import getpass
+
+    from alexandria.web.auth import hash_password, write_password_hash
+
+    cfg = load_config()
+    pw1 = getpass.getpass("New web password: ")
+    if not pw1:
+        console.print("[red]error:[/] empty password")
+        raise typer.Exit(1)
+    pw2 = getpass.getpass("Confirm:          ")
+    if pw1 != pw2:
+        console.print("[red]error:[/] passwords do not match")
+        raise typer.Exit(1)
+
+    path = cfg.web_password_hash_path
+    write_password_hash(path, hash_password(pw1))
+    console.print(f"[green]written[/] {path} (chmod 600)")
+
+
 @app.command("mcp-http")
 def mcp_http_cmd(
     host: Optional[str] = typer.Option(None, "--host", help="Bind address"),

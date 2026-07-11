@@ -74,6 +74,16 @@ class NetworkConfig:
 
 
 @dataclass(frozen=True)
+class WebConfig:
+    enabled: bool = True
+    title: str = "Alexandria"
+    max_upload_mb: int = 100
+    password_hash_file: str | None = None    # default: $HOME/web_password_hash
+    session_secret_file: str | None = None   # default: $HOME/session_secret
+    session_max_age_days: int = 30
+
+
+@dataclass(frozen=True)
 class Config:
     home: Path
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
@@ -82,6 +92,7 @@ class Config:
     http: HttpConfig = field(default_factory=HttpConfig)
     extractors: ExtractorsConfig = field(default_factory=ExtractorsConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
+    web: WebConfig = field(default_factory=WebConfig)
     category_rules: tuple[CategoryRule, ...] = ()
 
     @property
@@ -93,8 +104,22 @@ class Config:
         return self.home / "blobs"
 
     @property
+    def pending_uploads_dir(self) -> Path:
+        return self.blobs_dir / "pending"
+
+    @property
     def config_path(self) -> Path:
         return self.home / "config.toml"
+
+    @property
+    def web_password_hash_path(self) -> Path:
+        return Path(self.web.password_hash_file).expanduser() if self.web.password_hash_file \
+            else self.home / "web_password_hash"
+
+    @property
+    def web_session_secret_path(self) -> Path:
+        return Path(self.web.session_secret_file).expanduser() if self.web.session_secret_file \
+            else self.home / "session_secret"
 
 
 def _default_home() -> Path:
@@ -131,6 +156,8 @@ def load(home: Path | None = None) -> Config:
         network_raw["allowed_hosts"] = tuple(network_raw["allowed_hosts"] or ())
     network = NetworkConfig(**network_raw)
 
+    web = WebConfig(**(data.get("web") or {}))
+
     rules_raw = data.get("category_rules") or []
     rules = tuple(
         CategoryRule(
@@ -149,5 +176,6 @@ def load(home: Path | None = None) -> Config:
         http=http,
         extractors=extractors,
         network=network,
+        web=web,
         category_rules=rules,
     )

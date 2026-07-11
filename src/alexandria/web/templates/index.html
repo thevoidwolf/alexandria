@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block main %}
+<div class="card">
+  <h2>Corpus</h2>
+  <div class="row">
+    <div class="stat"><div class="k">Documents</div><div class="v">{{ catalog.total_docs }}</div></div>
+    <div class="stat"><div class="k">On disk</div><div class="v">{{ human_bytes(catalog.total_bytes) }}</div></div>
+    <div class="stat"><div class="k">Categories</div><div class="v">{{ catalog.categories|length }}</div></div>
+    <div class="stat"><div class="k">Tags</div><div class="v">{{ catalog.tags|length }}</div></div>
+  </div>
+  {% if catalog.categories %}
+  <div style="margin-top: 18px;">
+    {% for c in catalog.categories[:8] %}
+      <span class="chip">{{ c.name }}<span class="n">{{ c.count }}</span></span>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Add documents</h2>
+  <div id="drop" style="
+      border: 2px dashed var(--line);
+      border-radius: 8px;
+      padding: 40px 20px;
+      text-align: center;
+      transition: background 0.15s, border-color 0.15s;
+      cursor: pointer;
+    ">
+    <div style="font-size: 15px; color: var(--dim);">
+      Drop PDFs, HTML, TXT, or Markdown here
+      <span style="opacity: 0.5;">·</span>
+      <label style="color: var(--accent); cursor: pointer;">
+        or choose files
+        <input type="file" id="picker" multiple hidden>
+      </label>
+    </div>
+    <div id="upload-hint" class="dim" style="font-size: 12px; margin-top: 8px;">
+      up to {{ max_upload_mb }} MB per file
+    </div>
+  </div>
+  <details style="margin-top: 14px;">
+    <summary class="dim" style="font-size: 13px; cursor: pointer;">Add category and tags (optional)</summary>
+    <div class="row" style="margin-top: 10px;">
+      <div>
+        <label class="dim" style="font-size: 12px;">Category</label>
+        <input type="text" id="category" placeholder="e.g. research">
+      </div>
+      <div>
+        <label class="dim" style="font-size: 12px;">Tags (comma-separated)</label>
+        <input type="text" id="tags" placeholder="e.g. paper, arxiv">
+      </div>
+    </div>
+  </details>
+</div>
+
+<div class="card">
+  <h2>Recent activity</h2>
+  <table class="jobs">
+    <thead>
+      <tr>
+        <th>What</th>
+        <th>Status</th>
+        <th>Started</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody id="jobs-body">
+      {% if recent_jobs %}
+        {% for j in recent_jobs %}
+        <tr data-job-id="{{ j.id }}">
+          <td>{{ describe_job(j) }}</td>
+          <td class="status status-{{ j.status }}">{{ j.status }}</td>
+          <td class="mono dim">{{ j.created_at }}</td>
+          <td class="dim">{{ job_detail(j) }}</td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr id="jobs-empty"><td colspan="4" class="empty">No jobs yet. Drop a file to start.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+(() => {
+  const dz = document.getElementById('drop');
+  const picker = document.getElementById('picker');
+  const categoryEl = document.getElementById('category');
+  const tagsEl = document.getElementById('tags');
+  const jobsBody = document.getElementById('jobs-body');
+
+  function statusClass(s) { return 'status status-' + s; }
+
+  function describeJob(j) {
+    if (j.kind === 'upload') return j.input.filename || 'upload';
+    if (j.kind === 'url')    return j.input.url || 'url';
+    return j.kind;
+  }
+  function detail(j) {
+    if (j.status === 'error') return j.error || '';
+    if (j.status === 'done' && j.result) {
+      if (j.result.was_duplicate) return 'duplicate (' + (j.result.dedup_gate || '?') + ')';
+      const bits = [];
+      if (j.result.title) bits.push('"' + j.result.title + '"');
+      if (j.result.n_chunks) bits.push(j.result.n_chunks + ' chunks');
+      return bits.join(' · ');
+    }
+    return '';
+  }
+
+  function upsertRow(job) {
+    const empty = document.getElementById('jobs-empty');
+    if (empty) empty.remove();
+    let row = jobsBody.querySelector(`tr[data-job-id="${job.id}"]`);
+    if (!row) {
+      row = document.createElement('tr');
+      row.dataset.jobId = job.id;
+      row.innerHTML = '<td></td><td></td><td class="mono dim"></td><td class="dim"></td>';
+      jobsBody.prepend(row);
+    }
+    row.children[0].textContent = describeJob(job);
+    row.children[1].className   = statusClass(job.status);
+    row.children[1].textContent = job.status;
+    row.children[2].textContent = job.created_at;
+    row.children[3].textContent = detail(job);
+  }
+
+  async function uploadFiles(files) {
+    if (!files || !files.length) return;
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+    if (categoryEl.value.trim()) fd.append('category', categoryEl.value.trim());
+    if (tagsEl.value.trim())     fd.append('tags', tagsEl.value.trim());
+    const r = await fetch('/api/upload', { method: 'POST', body: fd, credentials: 'same-origin' });
+    if (!r.ok) {
+      alert('Upload failed: ' + r.status);
+      return;
+    }
+    const body = await r.json();
+    if (body.errors && body.errors.length) {
+      alert('Some files rejected:\n' + body.errors.map(e => `${e.filename}: ${e.reason}`).join('\n'));
+    }
+  }
+
+  dz.addEventListener('dragover', e => {
+    e.preventDefault();
+    dz.style.background = 'var(--accent-soft)';
+    dz.style.borderColor = 'var(--accent)';
+  });
+  dz.addEventListener('dragleave', () => {
+    dz.style.background = '';
+    dz.style.borderColor = 'var(--line)';
+  });
+  dz.addEventListener('drop', e => {
+    e.preventDefault();
+    dz.style.background = '';
+    dz.style.borderColor = 'var(--line)';
+    uploadFiles(e.dataTransfer.files);
+  });
+  dz.addEventListener('click', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'LABEL') return;
+    picker.click();
+  });
+  picker.addEventListener('change', () => uploadFiles(picker.files));
+
+  const es = new EventSource('/api/jobs/stream');
+  ['job.queued','job.running','job.done','job.error','job.cancelled'].forEach(name => {
+    es.addEventListener(name, e => {
+      try { upsertRow(JSON.parse(e.data)); } catch {}
+    });
+  });
+})();
+</script>
+{% endblock %}

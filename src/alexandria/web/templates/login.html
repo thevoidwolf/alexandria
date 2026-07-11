@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Log in — {{ title }}{% endblock %}
+{% block main %}
+<div style="max-width: 380px; margin: 60px auto 0;">
+  <div class="card">
+    <h2>Log in</h2>
+    <p class="dim" style="margin-top: 0; margin-bottom: 20px;">
+      Alexandria web access requires the password set with
+      <code>alexandria set-web-password</code>.
+    </p>
+    {% if error %}
+    <div style="background: #fde8e6; color: var(--err); padding: 10px 12px; border-radius: 4px; margin-bottom: 14px; font-size: 13px;">
+      {{ error }}
+    </div>
+    {% endif %}
+    <form method="post" action="/login" autocomplete="off">
+      <label for="pw" class="dim" style="display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">Password</label>
+      <input id="pw" name="password" type="password" autofocus required>
+      <div style="margin-top: 14px; text-align: right;">
+        <input type="submit" value="Log in">
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
