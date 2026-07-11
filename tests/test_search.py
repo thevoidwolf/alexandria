@@ -93,3 +93,43 @@ def test_limit_is_respected(seeded):
     cfg, conn = seeded
     hits = search("the", conn, cfg, limit=2)
     assert len(hits) <= 2
+
+
+# ---- rank signals (fts_rank / vec_rank / matched_in) -----------------------
+
+
+def test_fts_mode_populates_only_fts_rank(seeded):
+    cfg, conn = seeded
+    hits = search("BM25", conn, cfg, mode="fts", limit=3)
+    assert hits
+    for h in hits:
+        assert h.fts_rank is not None and h.fts_rank >= 1
+        assert h.vec_rank is None
+        assert h.matched_in == ("fts",)
+    # Ranks are strictly increasing along the returned order.
+    ranks = [h.fts_rank for h in hits]
+    assert ranks == sorted(ranks)
+
+
+def test_vec_mode_populates_only_vec_rank(seeded):
+    cfg, conn = seeded
+    hits = search("payment for services", conn, cfg, mode="vec", limit=3)
+    assert hits
+    for h in hits:
+        assert h.vec_rank is not None and h.vec_rank >= 1
+        assert h.fts_rank is None
+        assert h.matched_in == ("vec",)
+
+
+def test_hybrid_marks_dual_matched_hits(seeded):
+    cfg, conn = seeded
+    # A query with both distinctive tokens and clear semantics — a bill-domain
+    # doc should surface in both retrievers' windows.
+    hits = search("account amount due", conn, cfg, mode="hybrid", limit=10)
+    assert hits
+    both = [h for h in hits if h.matched_in == ("fts", "vec")]
+    assert both, "at least one hit should appear in both retriever lists"
+    # For dual-matched hits, both ranks are populated with sensible integers.
+    for h in both:
+        assert h.fts_rank is not None and h.fts_rank >= 1
+        assert h.vec_rank is not None and h.vec_rank >= 1

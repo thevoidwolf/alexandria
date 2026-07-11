@@ -52,7 +52,12 @@
             </a>
             {% if h.category %}<span class="chip">{{ h.category }}</span>{% endif %}
             {% for t in h.tags %}<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">{{ t }}</span>{% endfor %}
-            <span class="mono dim" style="margin-left: auto; font-size: 11px;">score {{ '%.4f'|format(h.score) }}</span>
+            <span class="mono dim" style="margin-left: auto; font-size: 11px;">
+              {% if h.fts_rank %}<span title="rank in keyword (BM25) list">fts #{{ h.fts_rank }}</span>{% endif %}
+              {% if h.fts_rank and h.vec_rank %} · {% endif %}
+              {% if h.vec_rank %}<span title="rank in vector list">vec #{{ h.vec_rank }}</span>{% endif %}
+              · score {{ '%.4f'|format(h.score) }}
+            </span>
           </div>
           <div style="margin-top: 6px; color: var(--ink); font-size: 14px; line-height: 1.55;">{{ highlight_snippet(h.snippet)|safe }}</div>
         </div>

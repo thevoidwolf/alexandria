@@ -130,8 +130,16 @@ def search_tool(
         limit: Max hits to return.
         mode: "hybrid" (default), "fts" (keyword only), or "vec" (semantic only).
 
-    Returns a list of hits, each with chunk_id, doc_id, score, snippet, title,
-    category, tags, source_uri, and content_type.
+    Returns a list of hits, each with chunk_id, doc_id, score, fts_rank,
+    vec_rank, matched_in, snippet, title, category, tags, source_uri, and
+    content_type.
+
+    Confidence signal: RRF flattens ``score`` into a narrow band
+    (~1/(60+rank)), so use ``fts_rank`` / ``vec_rank`` (1-indexed within
+    each retriever's over-fetch window; None if not in that window) and
+    ``matched_in`` (e.g. ``["fts", "vec"]``) to gauge how strong a hit is.
+    A chunk in ``matched_in=["fts", "vec"]`` with both ranks near 1 is
+    much stronger than one with only a single low rank.
     """
     cfg, conn = _get()
     with _lock:
@@ -145,6 +153,9 @@ def search_tool(
             "chunk_id": h.chunk_id,
             "doc_id": h.doc_id,
             "score": h.score,
+            "fts_rank": h.fts_rank,
+            "vec_rank": h.vec_rank,
+            "matched_in": list(h.matched_in),
             "snippet": format_snippet_markdown(h.snippet),
             "title": h.title,
             "category": h.category,

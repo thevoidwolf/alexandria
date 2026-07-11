@@ -98,8 +98,13 @@ def test_search_returns_hits(client):
     hits = r.json()
     assert isinstance(hits, list)
     for h in hits:
-        assert {"chunk_id", "doc_id", "score", "snippet", "title",
-                "category", "tags", "source_uri", "content_type"} <= h.keys()
+        assert {"chunk_id", "doc_id", "score", "fts_rank", "vec_rank",
+                "matched_in", "snippet", "title", "category", "tags",
+                "source_uri", "content_type"} <= h.keys()
+        # fts mode → only fts_rank populated
+        assert h["fts_rank"] is not None
+        assert h["vec_rank"] is None
+        assert h["matched_in"] == ["fts"]
 
 
 # ---- /files/<doc_id> --------------------------------------------------------

@@ -25,13 +25,22 @@ SNIPPET_MARK_END = "\uE001"
 class SearchHit:
     chunk_id: str
     doc_id: str
-    score: float
+    score: float                    # RRF-fused; magnitude compressed by design
     snippet: str
     title: str | None
     category: str | None
     tags: list[str]
     source_uri: str | None
     content_type: str
+    # Rank signals. Because RRF flattens scores into a narrow band
+    # (~1/(60+rank)), consumers that want a confidence signal should read
+    # ranks instead. Position in each retriever's top-N list, 1-indexed;
+    # None means the chunk didn't appear in that retriever's window.
+    fts_rank: int | None = None
+    vec_rank: int | None = None
+    # Convenience view of which retrievers surfaced this chunk. A hit in
+    # both is materially more confident than a hit in either alone.
+    matched_in: tuple[str, ...] = ()
 
 
 def _serialize_vec(vec) -> bytes:
@@ -210,6 +219,11 @@ def search(
     else:
         fused = _rrf([fts_ranked, vec_ranked])
 
+    # Per-retriever rank lookup, 1-indexed. Populated for every fetched
+    # rowid regardless of mode; missing means "not in this retriever's window".
+    fts_rank_by_rowid = {rowid: i + 1 for i, rowid in enumerate(fts_ranked)}
+    vec_rank_by_rowid = {rowid: i + 1 for i, rowid in enumerate(vec_ranked)}
+
     ordered = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
 
     hits: list[SearchHit] = []
@@ -221,6 +235,13 @@ def search(
         snippet = fts_by_rowid.get(rowid)
         if not snippet:
             snippet = chunk_text[:200] + ("…" if len(chunk_text) > 200 else "")
+        fts_rank = fts_rank_by_rowid.get(rowid)
+        vec_rank = vec_rank_by_rowid.get(rowid)
+        matched: list[str] = []
+        if fts_rank is not None:
+            matched.append("fts")
+        if vec_rank is not None:
+            matched.append("vec")
         hits.append(
             SearchHit(
                 chunk_id=chunk_id,
@@ -232,6 +253,9 @@ def search(
                 tags=_load_tags(conn, doc_id),
                 source_uri=source_uri,
                 content_type=content_type,
+                fts_rank=fts_rank,
+                vec_rank=vec_rank,
+                matched_in=tuple(matched),
             )
         )
     return hits
