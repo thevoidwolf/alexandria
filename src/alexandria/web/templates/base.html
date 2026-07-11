@@ -49,6 +49,8 @@
     header.site nav { margin-left: auto; display: flex; gap: 16px; }
     header.site nav a { color: var(--dim); font-size: 13px; }
     header.site nav a:hover { color: var(--ink); text-decoration: none; }
+    header.site nav a.here { color: var(--ink); border-bottom: 1.5px solid var(--accent); }
+    mark { background: var(--accent-soft); color: var(--ink); padding: 0 2px; border-radius: 2px; }
     header.site nav form { display: inline; margin: 0; }
     header.site nav button.linklike {
       background: none; border: 0; padding: 0; cursor: pointer;
@@ -137,7 +139,9 @@
       <h1><a href="/" style="color: inherit;">{{ title }}</a></h1>
       {% if authenticated %}
       <nav>
-        <a href="/">home</a>
+        <a href="/"{% if nav == 'home' %} class="here"{% endif %}>home</a>
+        <a href="/search"{% if nav == 'search' %} class="here"{% endif %}>search</a>
+        <a href="/documents"{% if nav == 'documents' %} class="here"{% endif %}>documents</a>
         <form method="post" action="/logout">
           <button type="submit" class="linklike">log out</button>
         </form>

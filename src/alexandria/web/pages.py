@@ -1,19 +1,22 @@
-"""Server-rendered page routes: /, /login, /logout."""
+"""Server-rendered page routes: /, /login, /logout, /search, /documents{,/id}."""
 from __future__ import annotations
 
+import html
 import sqlite3
 import threading
 from dataclasses import asdict
 from importlib import metadata as importlib_metadata
 from pathlib import Path
+from urllib.parse import urlencode
 
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
-from alexandria.catalog import get_catalog
+from alexandria.catalog import get_catalog, get_document, list_documents
 from alexandria.config import Config
+from alexandria.search import search
 from alexandria.web.auth import (
     COOKIE_NAME,
     issue_session,
@@ -49,6 +52,23 @@ def _describe_job(j) -> str:
     return j.kind
 
 
+def _highlight_snippet(s: str) -> str:
+    """Turn FTS5 snippet delimiters into <mark> tags.
+
+    ``search()`` calls ``snippet(..., '[', ']', ...)``. We HTML-escape first,
+    then swap the delimiters. Literal '[' or ']' in the source text get
+    mangled — acceptable tradeoff for W4; W5 polish can pick sentinel chars.
+    """
+    escaped = html.escape(s)
+    return escaped.replace("[", "<mark>").replace("]", "</mark>")
+
+
+def _split_tags(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
 def _job_detail(j) -> str:
     if j.status == "error":
         return j.error or ""
@@ -78,6 +98,7 @@ def build_page_routes(
     templates.env.globals["human_bytes"] = _human_bytes
     templates.env.globals["describe_job"] = _describe_job
     templates.env.globals["job_detail"] = _job_detail
+    templates.env.globals["highlight_snippet"] = _highlight_snippet
 
     cookie_max_age = cfg.web.session_max_age_days * 86400
 
@@ -87,9 +108,96 @@ def build_page_routes(
         recent = jobs.list_recent(limit=20) if jobs else []
         return templates.TemplateResponse(request, "index.html", {
             "authenticated": True,
+            "nav": "home",
             "catalog": catalog,
             "recent_jobs": recent,
             "max_upload_mb": cfg.web.max_upload_mb,
+        })
+
+    async def page_search(request: Request) -> Response:
+        params = request.query_params
+        q = (params.get("q") or "").strip()
+        category = params.get("category") or None
+        tags_raw = params.get("tags") or ""
+        tags = _split_tags(tags_raw)
+        mode = params.get("mode", "hybrid")
+        if mode not in ("hybrid", "fts", "vec"):
+            mode = "hybrid"
+
+        with lock:
+            catalog = get_catalog(conn)
+            hits = search(
+                q, conn, cfg,
+                category=category, tags=tags, limit=25, mode=mode,  # type: ignore[arg-type]
+            ) if q else []
+
+        return templates.TemplateResponse(request, "search.html", {
+            "authenticated": True,
+            "nav": "search",
+            "catalog": catalog,
+            "q": q,
+            "category": category,
+            "tags": tags_raw,
+            "mode": mode,
+            "hits": hits,
+        })
+
+    async def page_list_documents(request: Request) -> Response:
+        params = request.query_params
+        category = params.get("category") or None
+        tags_raw = params.get("tags") or ""
+        tags = _split_tags(tags_raw)
+        try:
+            offset = max(0, int(params.get("offset", "0")))
+        except ValueError:
+            offset = 0
+        limit = 20
+
+        with lock:
+            catalog = get_catalog(conn)
+            # Over-fetch one row to detect whether a next page exists.
+            docs = list_documents(
+                conn, category=category, tags=tags,
+                limit=limit + 1, offset=offset,
+            )
+        has_next = len(docs) > limit
+        docs = docs[:limit]
+
+        def page_url(new_offset: int) -> str:
+            qs = {"offset": new_offset}
+            if category:
+                qs["category"] = category
+            if tags_raw:
+                qs["tags"] = tags_raw
+            return "/documents?" + urlencode(qs)
+
+        return templates.TemplateResponse(request, "documents.html", {
+            "authenticated": True,
+            "nav": "documents",
+            "catalog": catalog,
+            "docs": docs,
+            "category": category,
+            "tags": tags_raw,
+            "offset": offset,
+            "prev_offset": offset - limit if offset > 0 else None,
+            "next_offset": offset + limit if has_next else None,
+            "page_url": page_url,
+        })
+
+    async def page_document_detail(request: Request) -> Response:
+        doc_id = request.path_params["doc_id"]
+        with lock:
+            doc = get_document(doc_id, conn, include_text=False)
+        if doc is None:
+            return templates.TemplateResponse(request, "document.html", {
+                "authenticated": True,
+                "nav": "documents",
+                "doc": None,
+            }, status_code=404)
+        return templates.TemplateResponse(request, "document.html", {
+            "authenticated": True,
+            "nav": "documents",
+            "doc": doc,
         })
 
     async def page_login_get(request: Request) -> Response:
@@ -136,4 +244,7 @@ def build_page_routes(
         Route("/login", page_login_get, methods=["GET"]),
         Route("/login", page_login_post, methods=["POST"]),
         Route("/logout", page_logout, methods=["POST"]),
+        Route("/search", page_search, methods=["GET"]),
+        Route("/documents", page_list_documents, methods=["GET"]),
+        Route("/documents/{doc_id}", page_document_detail, methods=["GET"]),
     ]

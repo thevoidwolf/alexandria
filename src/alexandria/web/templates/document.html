@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}{% if doc %}{{ doc.title or ('untitled ' + doc.content_type) }}{% else %}Not found{% endif %} — {{ title }}{% endblock %}
+{% block main %}
+{% if not doc %}
+<div class="card">
+  <h2>Not found</h2>
+  <p class="dim">No document with that id.</p>
+  <p><a href="/documents">← Back to documents</a></p>
+</div>
+{% else %}
+<div class="card">
+  <div class="dim" style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px;">
+    <a href="/documents" style="color: var(--dim);">← Documents</a>
+  </div>
+  <h2 style="font-size: 22px; margin-top: 4px;">{{ doc.title or ('untitled ' + doc.content_type) }}</h2>
+  <div style="margin-top: 8px;">
+    {% if doc.category %}<span class="chip">{{ doc.category }}</span>{% endif %}
+    {% for t in doc.tags %}<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">{{ t }}</span>{% endfor %}
+  </div>
+
+  <div class="row" style="margin-top: 20px;">
+    <div class="stat"><div class="k">Type</div><div class="v" style="font-size: 18px;">{{ doc.content_type }}</div></div>
+    <div class="stat"><div class="k">Size</div><div class="v" style="font-size: 18px;">{{ human_bytes(doc.bytes) }}</div></div>
+    <div class="stat"><div class="k">Ingested</div><div class="v mono" style="font-size: 13px;">{{ doc.ingested_at }}</div></div>
+    <div class="stat"><div class="k">Last seen</div><div class="v mono" style="font-size: 13px;">{{ doc.last_seen_at }}</div></div>
+  </div>
+
+  {% if doc.author or doc.published_at %}
+  <div style="margin-top: 18px; color: var(--dim); font-size: 13px;">
+    {% if doc.author %}<div>Author: <span style="color: var(--ink);">{{ doc.author }}</span></div>{% endif %}
+    {% if doc.published_at %}<div>Published: <span class="mono" style="color: var(--ink);">{{ doc.published_at }}</span></div>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Sources</h2>
+  {% if not doc.sources %}
+    <div class="empty">No sources recorded.</div>
+  {% else %}
+  <table class="jobs">
+    <thead><tr><th>Kind</th><th>URI</th><th>Seen</th></tr></thead>
+    <tbody>
+    {% for s in doc.sources %}
+      <tr>
+        <td class="dim">{{ s.source_kind }}</td>
+        <td class="mono" style="word-break: break-all;">{{ s.source_uri }}</td>
+        <td class="mono dim">{{ s.seen_at }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Extracted text</h2>
+  <details id="doc-text">
+    <summary class="dim" style="cursor: pointer; font-size: 13px;">Show extracted text (lazy-loaded)</summary>
+    <pre id="doc-text-body" style="margin: 12px 0 0; padding: 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; white-space: pre-wrap; word-break: break-word; font-family: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.55; color: var(--ink); max-height: 60vh; overflow: auto;">Loading…</pre>
+  </details>
+</div>
+
+<script>
+(() => {
+  const det = document.getElementById('doc-text');
+  const body = document.getElementById('doc-text-body');
+  let loaded = false;
+  det.addEventListener('toggle', async () => {
+    if (!det.open || loaded) return;
+    try {
+      const r = await fetch('/api/documents/{{ doc.id }}?include_text=true', { credentials: 'same-origin' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      body.textContent = j.extracted_text || '(no extracted text on record)';
+      loaded = true;
+    } catch (e) {
+      body.textContent = 'Failed to load: ' + e.message;
+    }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

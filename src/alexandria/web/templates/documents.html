@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Documents — {{ title }}{% endblock %}
+{% block main %}
+<div class="card">
+  <h2>Documents <span class="dim" style="font-weight: 400; font-size: 14px;">— {{ catalog.total_docs }} total</span></h2>
+  <form method="get" action="/documents" class="row" style="align-items: end;">
+    <div>
+      <label class="dim" style="font-size: 12px;">Category</label>
+      <select name="category" style="width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; font: inherit; background: var(--panel);">
+        <option value="">Any</option>
+        {% for c in catalog.categories %}
+          <option value="{{ c.name }}"{% if c.name == category %} selected{% endif %}>{{ c.name }} ({{ c.count }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="dim" style="font-size: 12px;">Tags (comma-separated, AND)</label>
+      <input type="text" name="tags" value="{{ tags or '' }}" placeholder="e.g. paper, math">
+    </div>
+    <div style="flex: 0 0 auto;">
+      <input type="submit" value="Apply">
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  {% if not docs %}
+    <div class="empty">No documents match.</div>
+  {% else %}
+  <table class="jobs">
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Type</th>
+        <th>Category</th>
+        <th>Tags</th>
+        <th style="text-align: right;">Bytes</th>
+        <th>Ingested</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for d in docs %}
+      <tr>
+        <td><a href="/documents/{{ d.id }}">{{ d.title or ('untitled ' + d.content_type) }}</a></td>
+        <td class="dim">{{ d.content_type }}</td>
+        <td>{% if d.category %}<span class="chip">{{ d.category }}</span>{% endif %}</td>
+        <td>{% for t in d.tags %}<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">{{ t }}</span>{% endfor %}</td>
+        <td style="text-align: right;" class="mono">{{ human_bytes(d.bytes) }}</td>
+        <td class="mono dim">{{ d.ingested_at }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <div style="display: flex; justify-content: space-between; margin-top: 16px; font-size: 13px;">
+    {% if prev_offset is not none %}
+      <a href="{{ page_url(prev_offset) }}">← Previous</a>
+    {% else %}
+      <span class="dim">← Previous</span>
+    {% endif %}
+    <span class="dim">Showing {{ offset + 1 }}–{{ offset + docs|length }}</span>
+    {% if next_offset is not none %}
+      <a href="{{ page_url(next_offset) }}">Next →</a>
+    {% else %}
+      <span class="dim">Next →</span>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

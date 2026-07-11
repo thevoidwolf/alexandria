@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Search — {{ title }}{% endblock %}
+{% block main %}
+<div class="card">
+  <h2>Search</h2>
+  <form method="get" action="/search">
+    <div style="display: flex; gap: 10px; align-items: stretch;">
+      <input type="text" name="q" value="{{ q or '' }}" placeholder="Ask anything" autofocus style="flex: 1 1 400px;">
+      <input type="submit" value="Search">
+    </div>
+    <details style="margin-top: 12px;"{% if category or tags or mode != 'hybrid' %} open{% endif %}>
+      <summary class="dim" style="font-size: 13px; cursor: pointer;">Filters</summary>
+      <div class="row" style="margin-top: 10px;">
+        <div>
+          <label class="dim" style="font-size: 12px;">Category</label>
+          <select name="category" style="width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; font: inherit; background: var(--panel);">
+            <option value="">Any</option>
+            {% for c in catalog.categories %}
+              <option value="{{ c.name }}"{% if c.name == category %} selected{% endif %}>{{ c.name }} ({{ c.count }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="dim" style="font-size: 12px;">Tags (comma-separated)</label>
+          <input type="text" name="tags" value="{{ tags or '' }}" placeholder="e.g. paper, math">
+        </div>
+        <div>
+          <label class="dim" style="font-size: 12px;">Mode</label>
+          <select name="mode" style="width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; font: inherit; background: var(--panel);">
+            {% for m in ['hybrid', 'fts', 'vec'] %}
+              <option value="{{ m }}"{% if m == mode %} selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </details>
+  </form>
+</div>
+
+{% if q %}
+<div class="card">
+  <h2>Results <span class="dim" style="font-weight: 400; font-size: 14px;">— {{ hits|length }} for "{{ q }}"</span></h2>
+  {% if not hits %}
+    <div class="empty">No matches. Try different terms or relax the filters.</div>
+  {% else %}
+    <div style="display: flex; flex-direction: column; gap: 14px;">
+      {% for h in hits %}
+        <div style="border-left: 3px solid var(--line); padding: 4px 0 4px 14px;">
+          <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
+            <a href="/documents/{{ h.doc_id }}" style="font-size: 15px; font-weight: 500;">
+              {{ h.title or ('untitled ' + h.content_type) }}
+            </a>
+            {% if h.category %}<span class="chip">{{ h.category }}</span>{% endif %}
+            {% for t in h.tags %}<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">{{ t }}</span>{% endfor %}
+            <span class="mono dim" style="margin-left: auto; font-size: 11px;">score {{ '%.4f'|format(h.score) }}</span>
+          </div>
+          <div style="margin-top: 6px; color: var(--ink); font-size: 14px; line-height: 1.55;">{{ highlight_snippet(h.snippet)|safe }}</div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
