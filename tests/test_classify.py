@@ -127,3 +127,130 @@ def test_apply_via_mcp_writes_metadata(bills_corpus):
         "SELECT tag FROM tags WHERE doc_id = ?", (target,)
     )]
     assert "utility" in tags
+
+
+# ---- batch --------------------------------------------------------------
+
+
+def test_bulk_missing_only_skips_labeled_docs(bills_corpus):
+    """Only the third unlabeled doc should be a candidate under missing_only=True."""
+    from alexandria.classify import suggest_metadata_bulk
+    cfg, conn, target = bills_corpus
+    r = suggest_metadata_bulk(conn, cfg, missing_only=True, limit=50)
+    assert r.scanned == 1
+    assert len(r.suggestions) == 1
+    assert r.suggestions[0].doc_id == target
+    assert r.applied == []
+
+
+def test_bulk_all_scope_covers_every_doc(bills_corpus):
+    from alexandria.classify import suggest_metadata_bulk
+    cfg, conn, _ = bills_corpus
+    r = suggest_metadata_bulk(conn, cfg, missing_only=False, limit=50)
+    # All three bill docs are scanned. Not all yield a suggestion (labeled docs
+    # may have all their tags/category already stronger than the threshold).
+    assert r.scanned == 3
+
+
+def test_bulk_apply_writes_and_marks_applied(bills_corpus):
+    from alexandria.classify import suggest_metadata_bulk
+    cfg, conn, target = bills_corpus
+    r = suggest_metadata_bulk(conn, cfg, missing_only=True, limit=50, apply=True)
+    assert target in r.applied
+    row = conn.execute(
+        "SELECT category FROM documents WHERE id = ?", (target,)
+    ).fetchone()
+    assert row[0] == "bills"
+
+
+# ---- ingest hook --------------------------------------------------------
+
+
+def test_ingest_hook_off_by_default(cfg, conn, corpus_dir: Path, fake_embed):
+    """With suggest_on_ingest=false, ingest_fetched result has no suggestion field."""
+    # Seed neighbors first so a suggestion COULD happen if enabled.
+    ingest_file(corpus_dir / "plain.txt", conn, cfg,
+                category="bills", tags=["utility"])
+    ingest_file(corpus_dir / "second-bill.txt", conn, cfg,
+                category="bills", tags=["utility", "water"])
+
+    # New unlabeled doc; simulate the jobs.py flow.
+    from alexandria.web.jobs import JobQueue
+    import threading
+    lock = threading.Lock()
+    q = JobQueue(cfg, conn, lock)
+
+    unlabeled = corpus_dir / "third-bill.txt"
+    unlabeled.write_text("Account balance due. Utility statement.\n")
+    r = ingest_file(unlabeled, conn, cfg)
+    with lock:
+        suggestion = q._maybe_suggest(r, category=None, tags=[])
+    assert suggestion is None
+
+
+def test_ingest_hook_produces_suggestion_when_enabled(cfg, conn, corpus_dir: Path, fake_embed, monkeypatch):
+    """With the config flag on, _maybe_suggest returns the suggestion dict."""
+    from dataclasses import replace
+    from alexandria.web.jobs import JobQueue
+    import threading
+
+    enabled_cfg = replace(
+        cfg, classify=replace(cfg.classify, suggest_on_ingest=True)
+    )
+
+    ingest_file(corpus_dir / "plain.txt", conn, enabled_cfg,
+                category="bills", tags=["utility"])
+    ingest_file(corpus_dir / "second-bill.txt", conn, enabled_cfg,
+                category="bills", tags=["utility", "water"])
+
+    unlabeled = corpus_dir / "third-bill.txt"
+    unlabeled.write_text("Account balance due. Utility statement.\n")
+    r = ingest_file(unlabeled, conn, enabled_cfg)
+
+    lock = threading.Lock()
+    q = JobQueue(enabled_cfg, conn, lock)
+    with lock:
+        suggestion = q._maybe_suggest(r, category=None, tags=[])
+    assert suggestion is not None
+    assert suggestion["suggested_category"] == "bills"
+    assert "utility" in suggestion["suggested_tags"]
+
+
+def test_ingest_hook_skips_when_metadata_already_provided(cfg, conn, corpus_dir: Path, fake_embed):
+    """User-supplied category at ingest → no suggestion even when enabled."""
+    from dataclasses import replace
+    from alexandria.web.jobs import JobQueue
+    import threading
+
+    enabled_cfg = replace(
+        cfg, classify=replace(cfg.classify, suggest_on_ingest=True)
+    )
+    ingest_file(corpus_dir / "plain.txt", conn, enabled_cfg,
+                category="bills", tags=["utility"])
+    r = ingest_file(corpus_dir / "second-bill.txt", conn, enabled_cfg,
+                    category="bills", tags=["utility", "water"])
+    lock = threading.Lock()
+    q = JobQueue(enabled_cfg, conn, lock)
+    with lock:
+        # Even with enabled_cfg, caller-supplied category short-circuits.
+        s = q._maybe_suggest(r, category="bills", tags=["utility", "water"])
+    assert s is None
+
+
+def test_ingest_hook_skips_duplicates(cfg, conn, corpus_dir: Path, fake_embed):
+    """Duplicate ingest → no fresh suggestion."""
+    from dataclasses import replace
+    from alexandria.web.jobs import JobQueue
+    import threading
+
+    enabled_cfg = replace(
+        cfg, classify=replace(cfg.classify, suggest_on_ingest=True)
+    )
+    ingest_file(corpus_dir / "plain.txt", conn, enabled_cfg)
+    # Re-ingest the same file — hits the source dedup gate.
+    r = ingest_file(corpus_dir / "plain.txt", conn, enabled_cfg)
+    assert r.was_duplicate
+    lock = threading.Lock()
+    q = JobQueue(enabled_cfg, conn, lock)
+    with lock:
+        assert q._maybe_suggest(r, category=None, tags=[]) is None

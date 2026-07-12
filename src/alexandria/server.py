@@ -17,7 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from datetime import datetime, timezone
 
 from alexandria.catalog import get_catalog, get_document, list_documents
-from alexandria.classify import suggest_metadata
+from alexandria.classify import Suggestion, suggest_metadata, suggest_metadata_bulk
 from alexandria.config import Config, load as load_config
 from alexandria.curate import (
     delete_category as _delete_category,
@@ -447,6 +447,11 @@ def suggest_metadata_tool(
             )
             applied = True
 
+    return _suggestion_payload(s, applied)
+
+
+def _suggestion_payload(s: Suggestion, applied: bool | None = None) -> dict[str, Any]:
+    """Serialize a Suggestion for MCP + API responses."""
     return {
         "doc_id": s.doc_id,
         "current": s.current,
@@ -464,7 +469,52 @@ def suggest_metadata_tool(
             }
             for n in s.neighbors
         ],
-        "applied": applied,
+        "applied": s.applied if applied is None else applied,
+    }
+
+
+@mcp.tool()
+def suggest_metadata_bulk_tool(
+    limit: int = 20,
+    offset: int = 0,
+    missing_only: bool = True,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Batch-run suggest_metadata across candidate documents.
+
+    Args:
+        limit: Max docs to consider (paged with ``offset``).
+        offset: Skip the first N candidates.
+        missing_only: When True (default), only docs with no category AND
+            no tags are considered. Set False to re-verify existing labels
+            against embedding neighbors — useful when the corpus is known
+            to be inaccurate and you want to spot disagreements.
+        apply: When True, write every non-empty suggestion. Off by
+            default; review first, apply once you trust the pool.
+
+    Returns:
+        {
+          "scanned": N,
+          "suggestions": [Suggestion, ...],   # docs with actionable output
+          "applied":     [doc_id, ...],       # subset written when apply=True
+        }
+
+    Suggestion quality is only as good as the labels on nearby documents.
+    If the existing taxonomy has errors, batch-applying will amplify them
+    — use the doc-detail review flow (or the /suggest-metadata page) to
+    curate a clean seed set first.
+    """
+    cfg, conn = _get()
+    with _lock:
+        r = suggest_metadata_bulk(
+            conn, cfg,
+            limit=limit, offset=offset,
+            missing_only=missing_only, apply=apply,
+        )
+    return {
+        "scanned": r.scanned,
+        "suggestions": [_suggestion_payload(s) for s in r.suggestions],
+        "applied": list(r.applied),
     }
 
 

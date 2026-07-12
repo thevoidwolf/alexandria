@@ -325,11 +325,15 @@ class JobQueue:
                 category=category, tags=tags,
                 filename_hint=filename,
             )
+            payload = asdict(result)
+            suggestion = self._maybe_suggest(result, category, tags)
+            if suggestion:
+                payload["suggested_metadata"] = suggestion
         try:
             pending_path.unlink()
         except FileNotFoundError:
             pass
-        return asdict(result)
+        return payload
 
     def _process_url(self, job: JobRow) -> dict[str, Any]:
         with self._db_lock:
@@ -338,4 +342,42 @@ class JobQueue:
                 category=job.input.get("category"),
                 tags=job.input.get("tags") or [],
             )
-        return asdict(result)
+            payload = asdict(result)
+            suggestion = self._maybe_suggest(
+                result,
+                job.input.get("category"),
+                job.input.get("tags") or [],
+            )
+            if suggestion:
+                payload["suggested_metadata"] = suggestion
+        return payload
+
+    def _maybe_suggest(
+        self, result, category: str | None, tags: list[str]
+    ) -> dict | None:
+        """After ingest, optionally attach an embedding-neighbor suggestion.
+
+        Off unless ``[classify] suggest_on_ingest = true``. Skips
+        duplicates (whose metadata was already resolved on an earlier
+        ingest), and skips docs where the caller supplied category/tags
+        (those are trusted). Called under ``self._db_lock``.
+        """
+        if not self._cfg.classify.suggest_on_ingest:
+            return None
+        if getattr(result, "was_duplicate", False):
+            return None
+        if category or tags:
+            return None
+        # Local import: avoids paying the numpy import cost for the
+        # common suggest-off path.
+        from alexandria.classify import suggest_metadata
+
+        s = suggest_metadata(result.doc_id, self._conn, self._cfg)
+        if s is None or (not s.suggested_category and not s.suggested_tags):
+            return None
+        return {
+            "suggested_category": s.suggested_category,
+            "suggested_tags": list(s.suggested_tags),
+            "category_confidence": s.category_confidence,
+            "tag_confidences": dict(s.tag_confidences),
+        }

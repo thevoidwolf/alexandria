@@ -22,7 +22,7 @@ from starlette.routing import Route
 from ulid import ULID
 
 from alexandria.catalog import get_catalog, get_document, list_documents
-from alexandria.classify import suggest_metadata
+from alexandria.classify import Suggestion, suggest_metadata, suggest_metadata_bulk
 from alexandria.config import Config
 from alexandria.curate import (
     delete_category,
@@ -69,6 +69,28 @@ def _sse_format(event: str, data: dict) -> str:
 def _rfc5987(value: str) -> str:
     """Percent-encode a filename for a Content-Disposition filename* param."""
     return quote(value, safe="")
+
+
+def _suggestion_json(s: Suggestion, applied: bool) -> dict:
+    return {
+        "doc_id": s.doc_id,
+        "current": s.current,
+        "suggested_category": s.suggested_category,
+        "suggested_tags": list(s.suggested_tags),
+        "category_confidence": s.category_confidence,
+        "tag_confidences": dict(s.tag_confidences),
+        "neighbors": [
+            {
+                "doc_id": n.doc_id,
+                "display_title": n.display_title,
+                "similarity": n.similarity,
+                "category": n.category,
+                "tags": list(n.tags),
+            }
+            for n in s.neighbors
+        ],
+        "applied": applied,
+    }
 
 
 
@@ -429,14 +451,25 @@ def build_api_routes(
 
     async def api_suggest_metadata(request: Request) -> JSONResponse:
         doc_id = request.path_params["doc_id"]
-        apply = False
-        # Accept a JSON body OR a query flag; body wins if present.
+        apply_writes = False
+        # Custom category/tag overrides let the UI accept a partial subset
+        # of the classifier's suggestion (uncheck bad tags before applying).
+        override_category: str | None | type(...) = ...
+        override_tags: list[str] | None = None
         try:
             body = await request.json()
             if isinstance(body, dict):
-                apply = bool(body.get("apply", False))
+                apply_writes = bool(body.get("apply", False))
+                if "category" in body:
+                    raw = body["category"]
+                    if raw is None or raw == "":
+                        override_category = None
+                    elif isinstance(raw, str):
+                        override_category = raw.strip() or None
+                if "tags" in body and isinstance(body["tags"], list):
+                    override_tags = [str(t).strip() for t in body["tags"] if str(t).strip()]
         except (ValueError, json.JSONDecodeError):
-            apply = (request.query_params.get("apply") or "").lower() in (
+            apply_writes = (request.query_params.get("apply") or "").lower() in (
                 "1", "true", "yes"
             )
 
@@ -445,32 +478,48 @@ def build_api_routes(
             if s is None:
                 return JSONResponse({"error": "not found"}, status_code=404)
             applied = False
-            if apply and (s.suggested_category or s.suggested_tags):
-                update_document_metadata(
-                    doc_id, conn,
-                    category=s.suggested_category if s.suggested_category else ...,
-                    tags=s.suggested_tags if s.suggested_tags else None,
+            if apply_writes:
+                cat = override_category if override_category is not ... else (
+                    s.suggested_category if s.suggested_category else ...
                 )
-                applied = True
+                tags = override_tags if override_tags is not None else (
+                    s.suggested_tags if s.suggested_tags else None
+                )
+                if cat is not ... or tags is not None:
+                    update_document_metadata(
+                        doc_id, conn, category=cat, tags=tags,
+                    )
+                    applied = True
 
+        return JSONResponse(_suggestion_json(s, applied))
+
+    async def api_suggest_metadata_bulk(request: Request) -> JSONResponse:
+        try:
+            body = await request.json()
+        except (ValueError, json.JSONDecodeError):
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        try:
+            limit = int(body.get("limit", 20))
+            offset = int(body.get("offset", 0))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "invalid limit/offset"}, status_code=400)
+        limit = max(1, min(200, limit))
+        offset = max(0, offset)
+        missing_only = bool(body.get("missing_only", True))
+        apply_writes = bool(body.get("apply", False))
+
+        with lock:
+            r = suggest_metadata_bulk(
+                conn, cfg,
+                limit=limit, offset=offset,
+                missing_only=missing_only, apply=apply_writes,
+            )
         return JSONResponse({
-            "doc_id": s.doc_id,
-            "current": s.current,
-            "suggested_category": s.suggested_category,
-            "suggested_tags": list(s.suggested_tags),
-            "category_confidence": s.category_confidence,
-            "tag_confidences": dict(s.tag_confidences),
-            "neighbors": [
-                {
-                    "doc_id": n.doc_id,
-                    "display_title": n.display_title,
-                    "similarity": n.similarity,
-                    "category": n.category,
-                    "tags": list(n.tags),
-                }
-                for n in s.neighbors
-            ],
-            "applied": applied,
+            "scanned": r.scanned,
+            "suggestions": [_suggestion_json(s, s.applied) for s in r.suggestions],
+            "applied": list(r.applied),
         })
 
     # ---- original-file endpoint ----------------------------------------
@@ -537,5 +586,7 @@ def build_api_routes(
         Route("/api/jobs/{job_id}/cancel", api_cancel_job, methods=["POST"]),
         Route("/api/documents/{doc_id}/suggest-metadata",
               api_suggest_metadata, methods=["POST"]),
+        Route("/api/suggest-metadata-bulk",
+              api_suggest_metadata_bulk, methods=["POST"]),
         Route("/files/{doc_id}", api_get_original, methods=["GET"]),
     ]

@@ -101,6 +101,12 @@ class ClassifyConfig:
     tag_min_fraction: float = 0.35        # tag must be on ≥ this fraction of neighbors
     category_min_fraction: float = 0.35   # same for category (majority pick)
     max_tags: int = 7                     # cap suggestion at this many tags
+    # When True, after each ingest the classifier runs and attaches a
+    # suggestion to the job's result JSON. Never auto-applies. Skips
+    # duplicates and docs where the user supplied category/tags at ingest.
+    # Off by default: only useful once the corpus has a trustworthy
+    # seed of labeled documents.
+    suggest_on_ingest: bool = False
 
 
 @dataclass(frozen=True)

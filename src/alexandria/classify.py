@@ -18,7 +18,7 @@ from __future__ import annotations
 import sqlite3
 import struct
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -259,3 +259,79 @@ def suggest_metadata(
         tag_confidences={t: tag_fracs[t] for t in suggested_tags},
         neighbors=neighbors,
     )
+
+
+# ---- batch --------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BulkResult:
+    scanned: int                    # docs considered
+    suggestions: list[Suggestion]   # those with any suggestion above thresholds
+    applied: list[str]              # doc_ids where apply=True actually wrote
+
+
+def _candidate_doc_ids(
+    conn: sqlite3.Connection, missing_only: bool, limit: int, offset: int
+) -> list[str]:
+    """Docs to run the classifier over.
+
+    ``missing_only`` picks docs with no category AND no tags — the honest
+    "needs cleanup" set. When False, walks every doc so callers can
+    re-verify existing labels against embedding neighbors (useful when
+    the corpus is known to be inaccurate).
+    """
+    if missing_only:
+        sql = (
+            "SELECT d.id FROM documents d "
+            "LEFT JOIN tags t ON t.doc_id = d.id "
+            "GROUP BY d.id "
+            "HAVING d.category IS NULL AND COUNT(t.tag) = 0 "
+            "ORDER BY d.ingested_at DESC LIMIT ? OFFSET ?"
+        )
+    else:
+        sql = (
+            "SELECT id FROM documents ORDER BY ingested_at DESC LIMIT ? OFFSET ?"
+        )
+    return [r[0] for r in conn.execute(sql, (limit, offset))]
+
+
+def suggest_metadata_bulk(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    *,
+    limit: int = 20,
+    offset: int = 0,
+    missing_only: bool = True,
+    apply: bool = False,
+) -> BulkResult:
+    """Run ``suggest_metadata`` over a batch of candidate docs.
+
+    Only returns suggestions that have *something* to suggest (category
+    or at least one tag met the thresholds in ``cfg.classify``). Never
+    writes unless ``apply=True``, and even then only writes fields with
+    a non-empty suggestion — an empty tag list won't clobber existing
+    tags.
+    """
+    from alexandria.curate import update_document_metadata
+
+    doc_ids = _candidate_doc_ids(conn, missing_only, limit, offset)
+    suggestions: list[Suggestion] = []
+    applied: list[str] = []
+    for doc_id in doc_ids:
+        s = suggest_metadata(doc_id, conn, cfg)
+        if s is None:
+            continue
+        # Skip empty suggestions — nothing actionable.
+        if not s.suggested_category and not s.suggested_tags:
+            continue
+        if apply and (s.suggested_category or s.suggested_tags):
+            update_document_metadata(
+                doc_id, conn,
+                category=s.suggested_category if s.suggested_category else ...,
+                tags=s.suggested_tags if s.suggested_tags else None,
+            )
+            applied.append(doc_id)
+            s = replace(s, applied=True)
+        suggestions.append(s)
+    return BulkResult(scanned=len(doc_ids), suggestions=suggestions, applied=applied)

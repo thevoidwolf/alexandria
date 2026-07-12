@@ -103,6 +103,16 @@ def _job_detail(j) -> str:
             bits.append(f'"{j.result["title"]}"')
         if j.result.get("n_chunks"):
             bits.append(f"{j.result['n_chunks']} chunks")
+        if j.result.get("suggested_metadata"):
+            sm = j.result["suggested_metadata"]
+            hint_bits: list[str] = []
+            if sm.get("suggested_category"):
+                hint_bits.append(sm["suggested_category"])
+            n_tags = len(sm.get("suggested_tags") or [])
+            if n_tags:
+                hint_bits.append(f"{n_tags} tag{'s' if n_tags != 1 else ''}")
+            if hint_bits:
+                bits.append("→ suggest " + " · ".join(hint_bits))
         return " · ".join(bits)
     return ""
 
@@ -274,6 +284,12 @@ def build_page_routes(
             "catalog": catalog,
         })
 
+    async def page_suggest_metadata(request: Request) -> Response:
+        return templates.TemplateResponse(request, "suggest_metadata.html", {
+            "authenticated": True,
+            "nav": "suggest",
+        })
+
     return [
         Route("/", page_index, methods=["GET"]),
         Route("/login", page_login_get, methods=["GET"]),
@@ -283,4 +299,5 @@ def build_page_routes(
         Route("/documents", page_list_documents, methods=["GET"]),
         Route("/documents/{doc_id}", page_document_detail, methods=["GET"]),
         Route("/taxonomy", page_taxonomy, methods=["GET"]),
+        Route("/suggest-metadata", page_suggest_metadata, methods=["GET"]),
     ]

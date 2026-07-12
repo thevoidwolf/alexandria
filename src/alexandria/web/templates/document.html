@@ -17,6 +17,7 @@
     <div style="margin-left: auto; display: flex; gap: 8px;">
       <a href="/files/{{ doc.id }}" target="_blank" rel="noopener" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px; text-decoration: none;">Open original</a>
       <a href="/files/{{ doc.id }}?download=1" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px; text-decoration: none;">Download</a>
+      <button type="button" id="suggest-btn" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px;">Suggest metadata</button>
       <button type="button" id="edit-btn" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px;">Edit</button>
       <button type="button" id="delete-btn" class="linklike" style="background: transparent; color: var(--err); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px;">Delete</button>
     </div>
@@ -60,6 +61,40 @@
     {% if doc.published_at %}<div>Published: <span class="mono" style="color: var(--ink);">{{ doc.published_at }}</span></div>{% endif %}
   </div>
   {% endif %}
+</div>
+
+<div id="suggest-panel" class="card" style="display: none;">
+  <h2 style="margin-top: 0;">Suggested metadata <span class="dim" style="font-weight: 400; font-size: 13px;">— from embedding neighbors</span></h2>
+  <div id="suggest-loading" class="dim" style="font-size: 13px;">Computing suggestion…</div>
+  <div id="suggest-body" style="display: none;">
+    <div id="suggest-empty" class="empty" style="display: none;">
+      No confident suggestion. The corpus doesn't have enough labeled neighbors yet.
+    </div>
+    <div id="suggest-content" style="display: none;">
+      <div style="margin-top: 4px;">
+        <label class="dim" style="font-size: 12px;">Category</label>
+        <div class="row" style="margin-top: 4px; align-items: baseline;">
+          <div style="flex: 0 0 auto;">
+            <input type="text" id="suggest-category" style="width: 260px;">
+            <span id="suggest-category-conf" class="mono dim" style="font-size: 11px; margin-left: 6px;"></span>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top: 14px;">
+        <label class="dim" style="font-size: 12px;">Tags <span id="suggest-tags-hint" style="font-size: 11px;">— uncheck any that don't fit</span></label>
+        <div id="suggest-tags" style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 8px;"></div>
+      </div>
+      <details style="margin-top: 16px;">
+        <summary class="dim" style="cursor: pointer; font-size: 13px;">Neighbors used for this suggestion</summary>
+        <div id="suggest-neighbors" style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px;"></div>
+      </details>
+      <div style="margin-top: 16px; display: flex; gap: 8px;">
+        <button type="button" id="suggest-apply">Apply</button>
+        <button type="button" id="suggest-cancel" style="background: transparent; color: var(--dim); border: 1px solid var(--line);">Cancel</button>
+      </div>
+      <div id="suggest-err" class="banner banner-error" style="display: none; margin-top: 10px;"></div>
+    </div>
+  </div>
 </div>
 
 <div class="card">
@@ -165,6 +200,127 @@
       return;
     }
     location.href = '/documents';
+  });
+
+  // ---- suggest metadata --------------------------------------------------
+  const suggestBtn      = document.getElementById('suggest-btn');
+  const suggestPanel    = document.getElementById('suggest-panel');
+  const suggestLoading  = document.getElementById('suggest-loading');
+  const suggestBody     = document.getElementById('suggest-body');
+  const suggestEmpty    = document.getElementById('suggest-empty');
+  const suggestContent  = document.getElementById('suggest-content');
+  const suggestCat      = document.getElementById('suggest-category');
+  const suggestCatConf  = document.getElementById('suggest-category-conf');
+  const suggestTags     = document.getElementById('suggest-tags');
+  const suggestNbrs     = document.getElementById('suggest-neighbors');
+  const suggestApply    = document.getElementById('suggest-apply');
+  const suggestCancel   = document.getElementById('suggest-cancel');
+  const suggestErr      = document.getElementById('suggest-err');
+
+  const fmtPct = (f) => (f * 100).toFixed(0) + '%';
+
+  const renderSuggestion = (s) => {
+    if (!s.suggested_category && (!s.suggested_tags || s.suggested_tags.length === 0)) {
+      suggestEmpty.style.display = '';
+      suggestContent.style.display = 'none';
+      return;
+    }
+    suggestEmpty.style.display = 'none';
+    suggestContent.style.display = '';
+    suggestCat.value = s.suggested_category || '';
+    suggestCatConf.textContent = s.suggested_category
+      ? `confidence ${fmtPct(s.category_confidence)}`
+      : '(no confident suggestion)';
+
+    suggestTags.innerHTML = '';
+    (s.suggested_tags || []).forEach((tag) => {
+      const conf = s.tag_confidences[tag] || 0;
+      const label = document.createElement('label');
+      label.style.cssText = 'display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; cursor: pointer;';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      cb.dataset.tag = tag;
+      cb.style.margin = 0;
+      const txt = document.createElement('span');
+      txt.textContent = tag;
+      const pct = document.createElement('span');
+      pct.className = 'mono dim';
+      pct.style.fontSize = '10px';
+      pct.textContent = fmtPct(conf);
+      label.append(cb, txt, pct);
+      suggestTags.appendChild(label);
+    });
+
+    suggestNbrs.innerHTML = '';
+    (s.neighbors || []).forEach((n) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'font-size: 12px; display: flex; gap: 8px; align-items: baseline;';
+      const link = document.createElement('a');
+      link.href = `/documents/${encodeURIComponent(n.doc_id)}`;
+      link.textContent = n.display_title || n.doc_id;
+      link.style.flex = '1 1 auto';
+      const meta = document.createElement('span');
+      meta.className = 'mono dim';
+      meta.style.fontSize = '11px';
+      const bits = [`sim ${n.similarity.toFixed(3)}`];
+      if (n.category) bits.push(n.category);
+      if (n.tags && n.tags.length) bits.push(n.tags.join(', '));
+      meta.textContent = bits.join(' · ');
+      row.append(link, meta);
+      suggestNbrs.appendChild(row);
+    });
+  };
+
+  suggestBtn.addEventListener('click', async () => {
+    suggestPanel.style.display = '';
+    suggestLoading.style.display = '';
+    suggestBody.style.display = 'none';
+    suggestErr.style.display = 'none';
+    try {
+      const r = await fetch('/api/documents/{{ doc.id }}/suggest-metadata', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        body: JSON.stringify({}),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const s = await r.json();
+      suggestLoading.style.display = 'none';
+      suggestBody.style.display = '';
+      renderSuggestion(s);
+    } catch (e) {
+      suggestLoading.textContent = 'Failed: ' + e.message;
+    }
+  });
+
+  suggestCancel.addEventListener('click', () => {
+    suggestPanel.style.display = 'none';
+  });
+
+  suggestApply.addEventListener('click', async () => {
+    suggestErr.style.display = 'none';
+    const category = suggestCat.value.trim() || null;
+    const tags = Array.from(suggestTags.querySelectorAll('input[type=checkbox]:checked'))
+      .map((cb) => cb.dataset.tag);
+    try {
+      const r = await fetch('/api/documents/{{ doc.id }}/suggest-metadata', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        body: JSON.stringify({ apply: true, category, tags }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        suggestErr.textContent = 'Apply failed: ' + (j.error || ('HTTP ' + r.status));
+        suggestErr.style.display = '';
+        return;
+      }
+      location.reload();
+    } catch (e) {
+      suggestErr.textContent = 'Apply failed: ' + e.message;
+      suggestErr.style.display = '';
+    }
   });
 })();
 </script>

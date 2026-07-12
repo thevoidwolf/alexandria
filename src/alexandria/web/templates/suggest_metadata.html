@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}Suggest metadata — {{ title }}{% endblock %}
+{% block main %}
+<div class="card">
+  <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
+    <h2 style="margin: 0;">Suggested metadata</h2>
+    <span class="dim" style="font-size: 13px;">— nearest-neighbor voting over existing labels</span>
+  </div>
+  <p class="dim" style="font-size: 13px; margin-top: 10px;">
+    Suggestion quality reflects the accuracy of nearby documents' labels.
+    Review each row, uncheck bad tags in Edit → Suggest metadata on the doc
+    page, and apply. Every accepted suggestion improves the pool for the next.
+  </p>
+  <div class="row" style="align-items: end; margin-top: 14px;">
+    <div style="flex: 0 0 auto;">
+      <label class="dim" style="font-size: 12px;">Scope</label>
+      <select id="scope">
+        <option value="missing" selected>Docs missing category or tags</option>
+        <option value="all">All docs (re-verify existing labels)</option>
+      </select>
+    </div>
+    <div style="flex: 0 0 auto;">
+      <label class="dim" style="font-size: 12px;">Batch size</label>
+      <input type="number" id="limit" value="20" min="1" max="200" style="width: 90px;">
+    </div>
+    <div style="flex: 0 0 auto;">
+      <button type="button" id="run">Run batch</button>
+    </div>
+    <div style="flex: 1 1 auto;"></div>
+    <div id="summary" class="mono dim" style="font-size: 12px;"></div>
+  </div>
+  <div id="err" class="banner banner-error" style="display: none; margin-top: 12px;"></div>
+</div>
+
+<div id="results" class="card" style="display: none;">
+  <h2 style="margin-top: 0;">Results</h2>
+  <div id="empty" class="empty" style="display: none;">
+    No confident suggestions in this batch.
+  </div>
+  <div id="rows" style="display: flex; flex-direction: column; gap: 14px;"></div>
+</div>
+
+<script>
+(() => {
+  const scopeEl   = document.getElementById('scope');
+  const limitEl   = document.getElementById('limit');
+  const runBtn    = document.getElementById('run');
+  const summary   = document.getElementById('summary');
+  const errBox    = document.getElementById('err');
+  const results   = document.getElementById('results');
+  const emptyBox  = document.getElementById('empty');
+  const rowsBox   = document.getElementById('rows');
+
+  const fmtPct = (f) => (f * 100).toFixed(0) + '%';
+
+  const renderChips = (items, kind) => {
+    if (!items || items.length === 0) return '<span class="dim" style="font-size:12px;">none</span>';
+    const style = kind === 'primary'
+      ? 'class="chip"'
+      : 'class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);"';
+    return items.map((t) => `<span ${style}>${t}</span>`).join(' ');
+  };
+
+  const renderRow = (s) => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'border-left: 3px solid var(--line); padding: 4px 0 4px 14px;';
+
+    const head = document.createElement('div');
+    head.style.cssText = 'display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;';
+    head.innerHTML = `
+      <a href="/documents/${encodeURIComponent(s.doc_id)}" style="font-size: 15px; font-weight: 500;">
+        ${s.current.title || s.doc_id}
+      </a>
+      <span class="mono dim" style="font-size: 11px;">${s.doc_id}</span>
+    `;
+    wrap.appendChild(head);
+
+    const diff = document.createElement('div');
+    diff.style.cssText = 'display: grid; grid-template-columns: 100px 1fr; gap: 6px 12px; margin-top: 10px; font-size: 13px;';
+    diff.innerHTML = `
+      <div class="dim">Current</div>
+      <div>
+        ${s.current.category ? `<span class="chip">${s.current.category}</span>` : '<span class="dim" style="font-size:12px;">no category</span>'}
+        ${renderChips(s.current.tags, 'secondary')}
+      </div>
+      <div class="dim">Suggested</div>
+      <div>
+        ${s.suggested_category ? `<span class="chip">${s.suggested_category}</span> <span class="mono dim" style="font-size:11px;">${fmtPct(s.category_confidence)}</span>` : '<span class="dim" style="font-size:12px;">no category</span>'}
+        <br>
+        ${(s.suggested_tags || []).map((t) => `<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">${t} <span class="mono dim" style="font-size:10px;">${fmtPct(s.tag_confidences[t] || 0)}</span></span>`).join(' ') || '<span class="dim" style="font-size:12px;">no tags</span>'}
+      </div>
+    `;
+    wrap.appendChild(diff);
+
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display: flex; gap: 8px; margin-top: 10px;';
+    const applyBtn = document.createElement('button');
+    applyBtn.type = 'button';
+    applyBtn.textContent = 'Apply as-is';
+    applyBtn.addEventListener('click', async () => {
+      applyBtn.disabled = true;
+      applyBtn.textContent = 'Applying…';
+      try {
+        const r = await fetch(`/api/documents/${encodeURIComponent(s.doc_id)}/suggest-metadata`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          credentials: 'same-origin',
+          body: JSON.stringify({ apply: true }),
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        applyBtn.textContent = 'Applied ✓';
+        wrap.style.opacity = '0.5';
+      } catch (e) {
+        applyBtn.disabled = false;
+        applyBtn.textContent = 'Retry apply';
+        alert('Apply failed: ' + e.message);
+      }
+    });
+    const editLink = document.createElement('a');
+    editLink.href = `/documents/${encodeURIComponent(s.doc_id)}`;
+    editLink.textContent = 'Review + edit →';
+    editLink.className = 'linklike';
+    editLink.style.cssText = 'padding: 8px 12px; background: transparent; color: var(--dim); border: 1px solid var(--line); border-radius: 4px; text-decoration: none; font-size: 13px; align-self: center;';
+    actions.append(applyBtn, editLink);
+    wrap.appendChild(actions);
+
+    return wrap;
+  };
+
+  runBtn.addEventListener('click', async () => {
+    errBox.style.display = 'none';
+    runBtn.disabled = true;
+    runBtn.textContent = 'Running…';
+    summary.textContent = '';
+    try {
+      const r = await fetch('/api/suggest-metadata-bulk', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          limit: parseInt(limitEl.value, 10) || 20,
+          missing_only: scopeEl.value === 'missing',
+        }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      summary.textContent = `scanned ${data.scanned} · ${data.suggestions.length} with suggestions`;
+      results.style.display = '';
+      rowsBox.innerHTML = '';
+      if (data.suggestions.length === 0) {
+        emptyBox.style.display = '';
+      } else {
+        emptyBox.style.display = 'none';
+        data.suggestions.forEach((s) => rowsBox.appendChild(renderRow(s)));
+      }
+    } catch (e) {
+      errBox.textContent = 'Failed: ' + e.message;
+      errBox.style.display = '';
+    } finally {
+      runBtn.disabled = false;
+      runBtn.textContent = 'Run batch';
+    }
+  });
+})();
+</script>
+{% endblock %}
