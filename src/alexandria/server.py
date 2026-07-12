@@ -131,8 +131,8 @@ def search_tool(
         mode: "hybrid" (default), "fts" (keyword only), or "vec" (semantic only).
 
     Returns a list of hits, each with chunk_id, doc_id, score, fts_rank,
-    vec_rank, matched_in, snippet, title, category, tags, source_uri, and
-    content_type.
+    vec_rank, matched_in, snippet, title, display_title, category, tags,
+    source_uri, and content_type.
 
     Confidence signal: RRF flattens ``score`` into a narrow band
     (~1/(60+rank)), so use ``fts_rank`` / ``vec_rank`` (1-indexed within
@@ -140,6 +140,11 @@ def search_tool(
     ``matched_in`` (e.g. ``["fts", "vec"]``) to gauge how strong a hit is.
     A chunk in ``matched_in=["fts", "vec"]`` with both ranks near 1 is
     much stronger than one with only a single low rank.
+
+    Title fields: ``title`` is the raw extractor metadata (may be null).
+    ``display_title`` is always populated — prefer it for user-facing
+    rendering; it falls back to the source URI's basename (filename or
+    URL path segment) and then to ``"untitled <content_type>"``.
     """
     cfg, conn = _get()
     with _lock:
@@ -158,6 +163,7 @@ def search_tool(
             "matched_in": list(h.matched_in),
             "snippet": format_snippet_markdown(h.snippet),
             "title": h.title,
+            "display_title": h.display_title,
             "category": h.category,
             "tags": h.tags,
             "source_uri": h.source_uri,

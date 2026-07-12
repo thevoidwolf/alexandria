@@ -14,7 +14,7 @@ from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
-from alexandria.catalog import get_catalog, get_document, list_documents
+from alexandria.catalog import display_title, get_catalog, get_document, list_documents
 from alexandria.config import Config
 from alexandria.search import SNIPPET_MARK_END, SNIPPET_MARK_START, search
 from alexandria.web.auth import (
@@ -53,30 +53,23 @@ def _describe_job(j) -> str:
 
 
 def _display_title(d) -> str:
-    """Prefer the document title; fall back to the source URI basename.
+    """Jinja shim over catalog.display_title.
 
-    Documents ingested via the browser have title=None almost always (text
-    files rarely carry titles); ``upload:foo.pdf`` becomes just ``foo.pdf``,
-    which reads better than "untitled pdf".
+    Prefer the pre-computed ``display_title`` field (SearchHit + DocumentRow
+    both carry it). Falls back to computing on the fly for any bare object
+    the templates might still hand us.
     """
+    pre = getattr(d, "display_title", None)
+    if pre:
+        return pre
     title = getattr(d, "title", None)
-    if title:
-        return title
     uri = getattr(d, "source_uri", None)
     if not uri:
         sources = getattr(d, "sources", None)
         if sources:
             first = sources[0]
             uri = first.get("source_uri") if isinstance(first, dict) else getattr(first, "source_uri", None)
-    if uri:
-        if uri.startswith("upload:"):
-            base = uri.split(":", 1)[1]
-        else:
-            base = uri.rsplit("/", 1)[-1]
-        if base:
-            return base
-    ctype = getattr(d, "content_type", "doc")
-    return f"untitled {ctype}"
+    return display_title(title, uri, getattr(d, "content_type", "doc"))
 
 
 def _highlight_snippet(s: str) -> str:

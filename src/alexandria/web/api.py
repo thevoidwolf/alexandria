@@ -132,6 +132,7 @@ def build_api_routes(
                     "matched_in": list(h.matched_in),
                     "snippet": format_snippet_markdown(h.snippet),
                     "title": h.title,
+                    "display_title": h.display_title,
                     "category": h.category,
                     "tags": h.tags,
                     "source_uri": h.source_uri,

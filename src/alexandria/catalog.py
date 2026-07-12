@@ -3,12 +3,32 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from alexandria.originals import basename_from_source
+
+
+def display_title(
+    title: str | None, source_uri: str | None, content_type: str
+) -> str:
+    """Human-readable title for UI + API responses.
+
+    Precedence: real ``title`` (as extracted from the document) → basename
+    of the source URI (filename or URL path segment) → ``"untitled <ctype>"``.
+    Kept separate from the stored ``title`` field so callers that care about
+    "did the extractor actually find a title" can still read the raw value.
+    """
+    if title:
+        return title
+    base = basename_from_source(source_uri)
+    if base:
+        return base
+    return f"untitled {content_type}"
+
 
 @dataclass
 class DocumentRow:
     id: str
     content_type: str
-    title: str | None
+    title: str | None                   # raw title from the extractor; may be null
     author: str | None
     published_at: str | None
     category: str | None
@@ -18,6 +38,7 @@ class DocumentRow:
     tags: list[str]
     sources: list[dict]                 # [{source_kind, source_uri, seen_at}, ...]
     extracted_text: str | None = None
+    display_title: str = ""             # never null; falls back to source basename
 
 
 @dataclass
@@ -60,6 +81,8 @@ def get_document(
     if row is None:
         return None
 
+    sources = _load_sources(conn, doc_id)
+    first_uri = sources[0]["source_uri"] if sources else None
     return DocumentRow(
         id=row[0],
         content_type=row[1],
@@ -72,7 +95,8 @@ def get_document(
         last_seen_at=row[8],
         extracted_text=row[9] if include_text else None,
         tags=_load_tags(conn, doc_id),
-        sources=_load_sources(conn, doc_id),
+        sources=sources,
+        display_title=display_title(row[2], first_uri, row[1]),
     )
 
 
@@ -117,6 +141,8 @@ def list_documents(
     result: list[DocumentRow] = []
     for r in rows:
         doc_id = r[0]
+        sources = _load_sources(conn, doc_id)
+        first_uri = sources[0]["source_uri"] if sources else None
         result.append(
             DocumentRow(
                 id=doc_id,
@@ -129,7 +155,8 @@ def list_documents(
                 ingested_at=r[7],
                 last_seen_at=r[8],
                 tags=_load_tags(conn, doc_id),
-                sources=_load_sources(conn, doc_id),
+                sources=sources,
+                display_title=display_title(r[2], first_uri, r[1]),
             )
         )
     return result

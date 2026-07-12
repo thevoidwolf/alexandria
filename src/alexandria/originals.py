@@ -27,16 +27,20 @@ def mime_for(content_type: str) -> str:
     return f"{mt}; charset={charset}" if charset else mt
 
 
-def filename_from_source(source_uri: str | None, content_type: str, doc_id: str) -> str:
-    """Best-effort human-friendly filename for the download.
+def basename_from_source(source_uri: str | None) -> str | None:
+    """Extract a display-friendly basename from a source URI, or None.
 
-    Basename-only so it can't smuggle path traversal into a
-    Content-Disposition header. Falls back to ``<doc_id>.<ext>``.
+    Handles the three source-URI flavors Alexandria records:
+      - ``upload:foo.pdf`` (web upload; take the part after the prefix)
+      - ``http(s)://.../paper.pdf?x=y`` (URL; take path basename, url-decoded)
+      - ``/abs/path/foo.pdf`` (filesystem; take Path().name)
+
+    Returns None when the URI is missing, empty, or a bare directory marker,
+    so callers can pick their own fallback (deterministic doc_id-based name,
+    "untitled", etc.).
     """
-    ext = content_type if content_type in MIME_BY_CTYPE else "bin"
-    fallback = f"{doc_id}.{ext}"
     if not source_uri:
-        return fallback
+        return None
 
     if source_uri.startswith("upload:"):
         candidate = source_uri.split(":", 1)[1]
@@ -48,8 +52,21 @@ def filename_from_source(source_uri: str | None, content_type: str, doc_id: str)
 
     candidate = (candidate or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
     if not candidate or candidate in {".", ".."}:
-        return fallback
+        return None
     return candidate
+
+
+def filename_from_source(source_uri: str | None, content_type: str, doc_id: str) -> str:
+    """Best-effort human-friendly filename for the download.
+
+    Basename-only so it can't smuggle path traversal into a
+    Content-Disposition header. Falls back to ``<doc_id>.<ext>``.
+    """
+    base = basename_from_source(source_uri)
+    if base:
+        return base
+    ext = content_type if content_type in MIME_BY_CTYPE else "bin"
+    return f"{doc_id}.{ext}"
 
 
 def blob_path(cfg: Config, sha: str) -> Path:

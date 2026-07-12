@@ -5,6 +5,7 @@ import struct
 from dataclasses import dataclass
 from typing import Literal
 
+from alexandria.catalog import display_title
 from alexandria.config import Config
 from alexandria.ingest.embed import embed_texts
 
@@ -27,11 +28,12 @@ class SearchHit:
     doc_id: str
     score: float                    # RRF-fused; magnitude compressed by design
     snippet: str
-    title: str | None
+    title: str | None               # raw extractor title; may be null
     category: str | None
     tags: list[str]
     source_uri: str | None
     content_type: str
+    display_title: str = ""         # never null; prefer this for UI rendering
     # Rank signals. Because RRF flattens scores into a narrow band
     # (~1/(60+rank)), consumers that want a confidence signal should read
     # ranks instead. Position in each retriever's top-N list, 1-indexed;
@@ -253,6 +255,7 @@ def search(
                 tags=_load_tags(conn, doc_id),
                 source_uri=source_uri,
                 content_type=content_type,
+                display_title=display_title(title, source_uri, content_type),
                 fts_rank=fts_rank,
                 vec_rank=vec_rank,
                 matched_in=tuple(matched),
