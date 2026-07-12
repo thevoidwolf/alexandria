@@ -22,6 +22,7 @@ from starlette.routing import Route
 from ulid import ULID
 
 from alexandria.catalog import get_catalog, get_document, list_documents
+from alexandria.classify import suggest_metadata
 from alexandria.config import Config
 from alexandria.curate import (
     delete_category,
@@ -424,6 +425,54 @@ def build_api_routes(
             n = delete_tag(name, conn)
         return JSONResponse({"affected": n})
 
+    # ---- classifier ------------------------------------------------------
+
+    async def api_suggest_metadata(request: Request) -> JSONResponse:
+        doc_id = request.path_params["doc_id"]
+        apply = False
+        # Accept a JSON body OR a query flag; body wins if present.
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                apply = bool(body.get("apply", False))
+        except (ValueError, json.JSONDecodeError):
+            apply = (request.query_params.get("apply") or "").lower() in (
+                "1", "true", "yes"
+            )
+
+        with lock:
+            s = suggest_metadata(doc_id, conn, cfg)
+            if s is None:
+                return JSONResponse({"error": "not found"}, status_code=404)
+            applied = False
+            if apply and (s.suggested_category or s.suggested_tags):
+                update_document_metadata(
+                    doc_id, conn,
+                    category=s.suggested_category if s.suggested_category else ...,
+                    tags=s.suggested_tags if s.suggested_tags else None,
+                )
+                applied = True
+
+        return JSONResponse({
+            "doc_id": s.doc_id,
+            "current": s.current,
+            "suggested_category": s.suggested_category,
+            "suggested_tags": list(s.suggested_tags),
+            "category_confidence": s.category_confidence,
+            "tag_confidences": dict(s.tag_confidences),
+            "neighbors": [
+                {
+                    "doc_id": n.doc_id,
+                    "display_title": n.display_title,
+                    "similarity": n.similarity,
+                    "category": n.category,
+                    "tags": list(n.tags),
+                }
+                for n in s.neighbors
+            ],
+            "applied": applied,
+        })
+
     # ---- original-file endpoint ----------------------------------------
 
     async def api_get_original(request: Request) -> "JSONResponse | FileResponse":
@@ -486,5 +535,7 @@ def build_api_routes(
         Route("/api/jobs/stream", api_jobs_stream, methods=["GET"]),
         Route("/api/jobs/{job_id}", api_get_job, methods=["GET"]),
         Route("/api/jobs/{job_id}/cancel", api_cancel_job, methods=["POST"]),
+        Route("/api/documents/{doc_id}/suggest-metadata",
+              api_suggest_metadata, methods=["POST"]),
         Route("/files/{doc_id}", api_get_original, methods=["GET"]),
     ]

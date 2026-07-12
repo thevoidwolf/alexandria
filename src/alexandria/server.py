@@ -17,6 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from datetime import datetime, timezone
 
 from alexandria.catalog import get_catalog, get_document, list_documents
+from alexandria.classify import suggest_metadata
 from alexandria.config import Config, load as load_config
 from alexandria.curate import (
     delete_category as _delete_category,
@@ -24,6 +25,7 @@ from alexandria.curate import (
     delete_tag as _delete_tag,
     rename_category as _rename_category,
     rename_tag as _rename_tag,
+    update_document_metadata as _update_document_metadata,
 )
 from alexandria.db import connect
 from alexandria.ingest import ingest_folder, ingest_url
@@ -385,6 +387,85 @@ def delete_tag_tool(name: str) -> dict[str, Any]:
     with _lock:
         n = _delete_tag(name, conn)
     return {"affected": n}
+
+
+@mcp.tool()
+def suggest_metadata_tool(
+    doc_id: str, apply: bool = False
+) -> dict[str, Any] | None:
+    """Suggest a category + tags for a document via nearest-neighbor voting.
+
+    No LLM — uses the chunk embeddings that already power search. For a
+    given document, we average its chunk embeddings, find the K nearest
+    documents in the corpus, and vote: categories/tags that appear on a
+    large-enough fraction of neighbors become suggestions. Confidence is
+    the agreement fraction.
+
+    Inspectable by design: the ``neighbors`` field lists the source
+    documents (with similarity) so you can see *why* a suggestion was
+    made. Deterministic — same corpus + same doc always yields the same
+    suggestion.
+
+    Args:
+        doc_id: The document id.
+        apply: When True, write the suggested category + tags to the
+            document via the same code path as ``update_document_metadata``
+            (only fields with non-empty suggestions are written; the
+            existing tag list is replaced with the suggestion, so review
+            before applying). Default False.
+
+    Returns None if the doc is unknown. Otherwise:
+        {
+          "doc_id",
+          "current":   {"title", "category", "tags"},
+          "suggested_category":   str | null,
+          "suggested_tags":       [str, ...],
+          "category_confidence":  0.0..1.0,
+          "tag_confidences":      {tag: 0.0..1.0, ...},
+          "neighbors": [
+              {"doc_id", "display_title", "similarity", "category", "tags"},
+              ...
+          ],
+          "applied": bool
+        }
+
+    Returns an empty suggestion (all fields null/empty, ``neighbors=[]``)
+    when the corpus has no labeled neighbors yet — the classifier improves
+    as you curate more of the store.
+    """
+    cfg, conn = _get()
+    with _lock:
+        s = suggest_metadata(doc_id, conn, cfg)
+        if s is None:
+            return None
+        applied = False
+        if apply and (s.suggested_category or s.suggested_tags):
+            _update_document_metadata(
+                doc_id, conn,
+                category=s.suggested_category if s.suggested_category else ...,
+                tags=s.suggested_tags if s.suggested_tags else None,
+            )
+            applied = True
+
+    return {
+        "doc_id": s.doc_id,
+        "current": s.current,
+        "suggested_category": s.suggested_category,
+        "suggested_tags": list(s.suggested_tags),
+        "category_confidence": s.category_confidence,
+        "tag_confidences": dict(s.tag_confidences),
+        "neighbors": [
+            {
+                "doc_id": n.doc_id,
+                "display_title": n.display_title,
+                "similarity": n.similarity,
+                "category": n.category,
+                "tags": list(n.tags),
+            }
+            for n in s.neighbors
+        ],
+        "applied": applied,
+    }
 
 
 def run() -> None:

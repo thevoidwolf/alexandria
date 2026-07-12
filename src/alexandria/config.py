@@ -89,6 +89,21 @@ class WebConfig:
 
 
 @dataclass(frozen=True)
+class ClassifyConfig:
+    """Knobs for suggest_metadata (nearest-neighbor tag/category propagation).
+
+    Suggestions come from the k nearest documents by chunk-embedding
+    similarity. A tag or category is only suggested when it appears on a
+    large-enough fraction of those neighbors — high fractions favor
+    precision (fewer, more confident suggestions), low fractions favor
+    recall.
+    """
+    tag_min_fraction: float = 0.35        # tag must be on ≥ this fraction of neighbors
+    category_min_fraction: float = 0.35   # same for category (majority pick)
+    max_tags: int = 7                     # cap suggestion at this many tags
+
+
+@dataclass(frozen=True)
 class Config:
     home: Path
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
@@ -98,6 +113,7 @@ class Config:
     extractors: ExtractorsConfig = field(default_factory=ExtractorsConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     web: WebConfig = field(default_factory=WebConfig)
+    classify: ClassifyConfig = field(default_factory=ClassifyConfig)
     category_rules: tuple[CategoryRule, ...] = ()
 
     @property
@@ -163,6 +179,8 @@ def load(home: Path | None = None) -> Config:
 
     web = WebConfig(**(data.get("web") or {}))
 
+    classify = ClassifyConfig(**(data.get("classify") or {}))
+
     rules_raw = data.get("category_rules") or []
     rules = tuple(
         CategoryRule(
@@ -182,5 +200,6 @@ def load(home: Path | None = None) -> Config:
         extractors=extractors,
         network=network,
         web=web,
+        classify=classify,
         category_rules=rules,
     )
