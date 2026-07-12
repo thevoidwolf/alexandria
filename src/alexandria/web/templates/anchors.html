@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %}Anchors — {{ title }}{% endblock %}
+{% block main %}
+<div class="card">
+  <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
+    <h2 style="margin: 0;">Label anchors</h2>
+    <span class="dim" style="font-size: 13px;">— natural-language prototypes for tags and categories</span>
+  </div>
+  <p class="dim" style="font-size: 13px; margin-top: 10px;">
+    Each anchor is a short description of what a label means. The classifier
+    compares each document's embedding to every anchor's embedding —
+    a match above the similarity threshold overrides neighbor-based voting.
+    Vague descriptions match everything weakly; specific ones match sharply.
+  </p>
+
+  <div class="row" style="align-items: end; margin-top: 14px;">
+    <div style="flex: 0 0 auto;">
+      <button type="button" id="export-btn" style="background: transparent; color: var(--dim); border: 1px solid var(--line);">Export JSON</button>
+    </div>
+    <div style="flex: 0 0 auto;">
+      <label class="linklike" style="cursor: pointer; padding: 10px 18px; background: transparent; color: var(--dim); border: 1px solid var(--line); border-radius: 4px; font-size: 14px;">
+        Import JSON
+        <input type="file" id="import-file" accept="application/json,.json" style="display: none;">
+      </label>
+    </div>
+    <div style="flex: 1 1 auto;"></div>
+    <div id="import-summary" class="mono dim" style="font-size: 12px;"></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Add / update</h2>
+  <form id="add-form">
+    <div class="row" style="align-items: end;">
+      <div style="flex: 0 0 130px;">
+        <label class="dim" style="font-size: 12px;">Kind</label>
+        <select id="new-kind" style="width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; font: inherit; background: var(--panel);">
+          <option value="category">category</option>
+          <option value="tag" selected>tag</option>
+        </select>
+      </div>
+      <div style="flex: 1 1 200px;">
+        <label class="dim" style="font-size: 12px;">Name</label>
+        <input type="text" id="new-name" placeholder="e.g. physics">
+      </div>
+    </div>
+    <div style="margin-top: 12px;">
+      <label class="dim" style="font-size: 12px;">Description</label>
+      <textarea id="new-description" rows="3" placeholder="Short natural-language definition. Specific is better." style="width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; font: inherit; font-size: 14px; resize: vertical;"></textarea>
+    </div>
+    <div style="margin-top: 12px; display: flex; gap: 8px;">
+      <button type="button" id="save-btn">Save</button>
+      <span id="save-status" class="dim" style="font-size: 12px; align-self: center;"></span>
+    </div>
+    <div id="save-err" class="banner banner-error" style="display: none; margin-top: 10px;"></div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Existing</h2>
+  <div id="anchors-empty" class="empty" style="display: none;">
+    No anchors yet — add one above or import a JSON file.
+  </div>
+  <div id="anchors-list" style="display: flex; flex-direction: column; gap: 20px;"></div>
+</div>
+
+<script>
+(() => {
+  const listEl      = document.getElementById('anchors-list');
+  const emptyEl     = document.getElementById('anchors-empty');
+  const kindEl      = document.getElementById('new-kind');
+  const nameEl      = document.getElementById('new-name');
+  const descEl      = document.getElementById('new-description');
+  const saveBtn     = document.getElementById('save-btn');
+  const saveStatus  = document.getElementById('save-status');
+  const saveErr     = document.getElementById('save-err');
+  const exportBtn   = document.getElementById('export-btn');
+  const importFile  = document.getElementById('import-file');
+  const importSum   = document.getElementById('import-summary');
+
+  const load = async () => {
+    const r = await fetch('/api/anchors', { credentials: 'same-origin' });
+    const items = await r.json();
+    listEl.innerHTML = '';
+    if (!items || items.length === 0) {
+      emptyEl.style.display = '';
+      return;
+    }
+    emptyEl.style.display = 'none';
+
+    // Group by kind.
+    const byKind = { category: [], tag: [] };
+    items.forEach((a) => { (byKind[a.kind] || (byKind[a.kind] = [])).push(a); });
+    ['category', 'tag'].forEach((kind) => {
+      if (!byKind[kind] || byKind[kind].length === 0) return;
+      const group = document.createElement('div');
+      const h = document.createElement('h3');
+      h.textContent = `${kind}s (${byKind[kind].length})`;
+      h.style.cssText = 'font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif; font-weight: 500; font-size: 15px; margin: 0 0 8px; color: var(--dim);';
+      group.appendChild(h);
+      byKind[kind].forEach((a) => group.appendChild(renderAnchor(a)));
+      listEl.appendChild(group);
+    });
+  };
+
+  const renderAnchor = (a) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'border-left: 3px solid var(--line); padding: 4px 0 4px 14px; margin-bottom: 12px;';
+
+    const head = document.createElement('div');
+    head.style.cssText = 'display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;';
+    head.innerHTML = `
+      <span style="font-size: 15px; font-weight: 500;">${a.name}</span>
+      <span class="mono dim" style="font-size: 11px;">updated ${a.updated_at}</span>
+    `;
+    const spacer = document.createElement('div');
+    spacer.style.marginLeft = 'auto';
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.textContent = 'Edit';
+    editBtn.style.cssText = 'background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; font-size: 12px;';
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.textContent = 'Delete';
+    delBtn.style.cssText = 'background: transparent; color: var(--err); border: 1px solid var(--line); padding: 4px 10px; font-size: 12px; margin-left: 6px;';
+    spacer.append(editBtn, delBtn);
+    head.appendChild(spacer);
+    row.appendChild(head);
+
+    const desc = document.createElement('div');
+    desc.textContent = a.description;
+    desc.style.cssText = 'margin-top: 6px; font-size: 13px; color: var(--ink); line-height: 1.55;';
+    row.appendChild(desc);
+
+    editBtn.addEventListener('click', () => {
+      kindEl.value = a.kind;
+      nameEl.value = a.name;
+      descEl.value = a.description;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      descEl.focus();
+    });
+    delBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete ${a.kind} anchor "${a.name}"?`)) return;
+      const r = await fetch(`/api/anchors/${encodeURIComponent(a.kind)}/${encodeURIComponent(a.name)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (!r.ok) { alert('Delete failed: HTTP ' + r.status); return; }
+      load();
+    });
+    return row;
+  };
+
+  saveBtn.addEventListener('click', async () => {
+    saveErr.style.display = 'none';
+    saveStatus.textContent = '';
+    const kind = kindEl.value;
+    const name = nameEl.value.trim();
+    const description = descEl.value.trim();
+    if (!name || !description) {
+      saveErr.textContent = 'Name and description are both required.';
+      saveErr.style.display = '';
+      return;
+    }
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    try {
+      const r = await fetch(`/api/anchors/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        body: JSON.stringify({ description }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        saveErr.textContent = 'Save failed: ' + (j.error || ('HTTP ' + r.status));
+        saveErr.style.display = '';
+        return;
+      }
+      saveStatus.textContent = `Saved ${kind} "${name}"`;
+      nameEl.value = '';
+      descEl.value = '';
+      await load();
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+    }
+  });
+
+  exportBtn.addEventListener('click', async () => {
+    const r = await fetch('/api/anchors/export', { credentials: 'same-origin' });
+    const data = await r.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'alexandria-anchors.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  });
+
+  importFile.addEventListener('change', async () => {
+    const file = importFile.files && importFile.files[0];
+    if (!file) return;
+    importSum.textContent = 'Reading…';
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const r = await fetch('/api/anchors/import', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        body: JSON.stringify(data),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const res = await r.json();
+      const errs = res.errors && res.errors.length ? ` · ${res.errors.length} errors` : '';
+      importSum.textContent = `Imported: +${res.added} added, ${res.updated} updated${errs}`;
+      await load();
+    } catch (e) {
+      importSum.textContent = 'Import failed: ' + e.message;
+    } finally {
+      importFile.value = '';
+    }
+  });
+
+  load();
+})();
+</script>
+{% endblock %}

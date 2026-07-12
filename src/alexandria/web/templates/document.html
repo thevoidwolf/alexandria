@@ -85,6 +85,10 @@
         <div id="suggest-tags" style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 8px;"></div>
       </div>
       <details style="margin-top: 16px;">
+        <summary class="dim" style="cursor: pointer; font-size: 13px;">Anchor matches</summary>
+        <div id="suggest-anchors" style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px;"></div>
+      </details>
+      <details style="margin-top: 10px;">
         <summary class="dim" style="cursor: pointer; font-size: 13px;">Neighbors used for this suggestion</summary>
         <div id="suggest-neighbors" style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px;"></div>
       </details>
@@ -213,6 +217,7 @@
   const suggestCatConf  = document.getElementById('suggest-category-conf');
   const suggestTags     = document.getElementById('suggest-tags');
   const suggestNbrs     = document.getElementById('suggest-neighbors');
+  const suggestAnchors  = document.getElementById('suggest-anchors');
   const suggestApply    = document.getElementById('suggest-apply');
   const suggestCancel   = document.getElementById('suggest-cancel');
   const suggestErr      = document.getElementById('suggest-err');
@@ -228,8 +233,9 @@
     suggestEmpty.style.display = 'none';
     suggestContent.style.display = '';
     suggestCat.value = s.suggested_category || '';
+    const catSrc = s.category_source === 'anchor' ? ' · from anchor' : (s.category_source === 'neighbor' ? ' · from neighbors' : '');
     suggestCatConf.textContent = s.suggested_category
-      ? `confidence ${fmtPct(s.category_confidence)}`
+      ? `confidence ${fmtPct(s.category_confidence)}${catSrc}`
       : '(no confident suggestion)';
 
     suggestTags.innerHTML = '';
@@ -251,6 +257,23 @@
       label.append(cb, txt, pct);
       suggestTags.appendChild(label);
     });
+
+    suggestAnchors.innerHTML = '';
+    if (!s.anchor_matches || s.anchor_matches.length === 0) {
+      suggestAnchors.innerHTML = '<span class="dim" style="font-size: 12px;">no anchors matched above threshold — using neighbor votes if any</span>';
+    } else {
+      s.anchor_matches.forEach((a) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'font-size: 12px; display: grid; grid-template-columns: 70px 130px 1fr 60px; gap: 8px; align-items: baseline;';
+        row.innerHTML = `
+          <span class="dim">${a.kind}</span>
+          <span>${a.name}</span>
+          <span class="dim" style="font-style: italic;">${a.description}</span>
+          <span class="mono dim">sim ${a.similarity.toFixed(3)}</span>
+        `;
+        suggestAnchors.appendChild(row);
+      });
+    }
 
     suggestNbrs.innerHTML = '';
     (s.neighbors || []).forEach((n) => {

@@ -290,6 +290,12 @@ def build_page_routes(
             "nav": "suggest",
         })
 
+    async def page_anchors(request: Request) -> Response:
+        return templates.TemplateResponse(request, "anchors.html", {
+            "authenticated": True,
+            "nav": "anchors",
+        })
+
     return [
         Route("/", page_index, methods=["GET"]),
         Route("/login", page_login_get, methods=["GET"]),
@@ -300,4 +306,5 @@ def build_page_routes(
         Route("/documents/{doc_id}", page_document_detail, methods=["GET"]),
         Route("/taxonomy", page_taxonomy, methods=["GET"]),
         Route("/suggest-metadata", page_suggest_metadata, methods=["GET"]),
+        Route("/anchors", page_anchors, methods=["GET"]),
     ]

@@ -101,6 +101,10 @@ class ClassifyConfig:
     tag_min_fraction: float = 0.35        # tag must be on ≥ this fraction of neighbors
     category_min_fraction: float = 0.35   # same for category (majority pick)
     max_tags: int = 7                     # cap suggestion at this many tags
+    # Cosine-similarity floor for an anchor to count. BGE-small on
+    # unit-normalized text tends to land 0.3–0.5 for topically-related
+    # pairs; 0.45 favors precision over recall. Tune per-corpus.
+    anchor_min_similarity: float = 0.45
     # When True, after each ingest the classifier runs and attaches a
     # suggestion to the job's result JSON. Never auto-applies. Skips
     # duplicates and docs where the user supplied category/tags at ingest.

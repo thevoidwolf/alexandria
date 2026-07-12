@@ -18,10 +18,11 @@ from __future__ import annotations
 import sqlite3
 import struct
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
+from alexandria.anchors import AnchorMatch, score_anchors
 from alexandria.catalog import display_title
 from alexandria.config import Config
 
@@ -50,6 +51,17 @@ class Suggestion:
     category_confidence: float          # 0.0 when no category met threshold
     tag_confidences: dict[str, float]   # only for suggested_tags
     neighbors: list[Neighbor]
+    # Provenance of each suggestion field:
+    #   "anchor"   → a user-authored anchor drove this suggestion
+    #   "neighbor" → embedding-neighbor voting drove it
+    #   "none"     → nothing cleared the threshold
+    category_source: str = "none"
+    tag_source: str = "none"
+    # Every anchor whose similarity to the doc cleared the threshold,
+    # regardless of whether it drove the final suggestion. Present for
+    # inspectability — you can see which anchor descriptions match the
+    # document even when their labels weren't the ones picked.
+    anchor_matches: list[AnchorMatch] = field(default_factory=list)
     applied: bool = False
 
 
@@ -167,6 +179,7 @@ def _empty_suggestion(
     current_title: str | None,
     current_category: str | None,
     current_tags: list[str],
+    anchor_matches: list[AnchorMatch] | None = None,
 ) -> Suggestion:
     return Suggestion(
         doc_id=doc_id,
@@ -176,6 +189,7 @@ def _empty_suggestion(
         category_confidence=0.0,
         tag_confidences={},
         neighbors=[],
+        anchor_matches=list(anchor_matches or []),
     )
 
 
@@ -203,12 +217,19 @@ def suggest_metadata(
         return _empty_suggestion(doc_id, current_title, current_category, current_tags)
     own_rowids, mean_vec = loaded
 
+    # Score user-authored anchors first — they override neighbors when
+    # confident enough. Empty anchor set → this returns [] and the neighbor
+    # pass drives suggestions as before.
+    anchor_matches = score_anchors(conn, mean_vec, cfg.classify.anchor_min_similarity)
+    category_anchors = [a for a in anchor_matches if a.kind == "category"]
+    tag_anchors = [a for a in anchor_matches if a.kind == "tag"]
+
     hits = _knn_chunks(conn, _serialize_vec(mean_vec), _K_CHUNKS)
     neighbor_pairs = _best_per_doc(conn, hits, set(own_rowids), _MAX_NEIGHBORS)
-    if not neighbor_pairs:
+    if not neighbor_pairs and not anchor_matches:
         return _empty_suggestion(doc_id, current_title, current_category, current_tags)
 
-    meta = _load_neighbor_meta(conn, [d for d, _ in neighbor_pairs])
+    meta = _load_neighbor_meta(conn, [d for d, _ in neighbor_pairs]) if neighbor_pairs else {}
 
     neighbors: list[Neighbor] = []
     cat_counts: Counter[str] = Counter()
@@ -231,24 +252,44 @@ def suggest_metadata(
             tag_counts[tag] += 1
 
     n_total = len(neighbors)
-    if n_total == 0:
-        return _empty_suggestion(doc_id, current_title, current_category, current_tags)
-
     cat_min = cfg.classify.category_min_fraction
     tag_min = cfg.classify.tag_min_fraction
     max_tags = cfg.classify.max_tags
 
+    # Category — anchors override.
     suggested_category: str | None = None
     category_confidence = 0.0
-    if cat_counts:
+    category_source = "none"
+    if category_anchors:
+        top = category_anchors[0]  # already sorted by similarity desc
+        suggested_category = top.name
+        category_confidence = top.similarity
+        category_source = "anchor"
+    elif cat_counts and n_total > 0:
         top_cat, top_n = cat_counts.most_common(1)[0]
         frac = top_n / n_total
         if frac >= cat_min:
             suggested_category = top_cat
             category_confidence = frac
+            category_source = "neighbor"
 
-    tag_fracs = {t: c / n_total for t, c in tag_counts.items() if c / n_total >= tag_min}
-    suggested_tags = sorted(tag_fracs, key=tag_fracs.__getitem__, reverse=True)[:max_tags]
+    # Tags — anchors override.
+    suggested_tags: list[str] = []
+    tag_confidences: dict[str, float] = {}
+    tag_source = "none"
+    if tag_anchors:
+        picked = tag_anchors[:max_tags]
+        suggested_tags = [a.name for a in picked]
+        tag_confidences = {a.name: a.similarity for a in picked}
+        tag_source = "anchor"
+    elif n_total > 0:
+        tag_fracs = {
+            t: c / n_total for t, c in tag_counts.items() if c / n_total >= tag_min
+        }
+        suggested_tags = sorted(tag_fracs, key=tag_fracs.__getitem__, reverse=True)[:max_tags]
+        tag_confidences = {t: tag_fracs[t] for t in suggested_tags}
+        if suggested_tags:
+            tag_source = "neighbor"
 
     return Suggestion(
         doc_id=doc_id,
@@ -256,8 +297,11 @@ def suggest_metadata(
         suggested_category=suggested_category,
         suggested_tags=suggested_tags,
         category_confidence=category_confidence,
-        tag_confidences={t: tag_fracs[t] for t in suggested_tags},
+        tag_confidences=tag_confidences,
         neighbors=neighbors,
+        category_source=category_source,
+        tag_source=tag_source,
+        anchor_matches=list(anchor_matches),
     )
 
 

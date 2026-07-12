@@ -5,7 +5,7 @@ from pathlib import Path
 
 import sqlite_vec
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -91,6 +91,21 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_created_desc  ON jobs(created_at DESC);
+
+-- User-authored label prototypes. Each anchor's embedding is computed
+-- once at write time and stored as packed float32 (same format used by
+-- chunks_vec). Small enough (dozens–hundreds) that a full in-memory
+-- scan is cheaper than a virtual-table k-NN, so no vec0 mirror.
+CREATE TABLE IF NOT EXISTS label_anchors (
+    kind        TEXT NOT NULL,      -- 'category' | 'tag'
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL,
+    embedding   BLOB NOT NULL,      -- packed float32, embed_model-dependent
+    embed_model TEXT NOT NULL,      -- staleness gate on model swap
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (kind, name)
+);
 """
 
 
@@ -131,8 +146,9 @@ def connect(db_path: Path, embed_dim: int) -> sqlite3.Connection:
     elif row[0] == SCHEMA_VERSION:
         pass
     elif row[0] < SCHEMA_VERSION:
-        # v1 → v2 was purely additive (jobs table). The IF NOT EXISTS above
-        # already created it; just bump the stamp.
+        # All migrations to date are purely additive (v2 added jobs,
+        # v3 added label_anchors). The IF NOT EXISTS clauses above
+        # already created any missing tables; just bump the stamp.
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     else:
         raise RuntimeError(

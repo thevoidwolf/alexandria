@@ -21,6 +21,7 @@ from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
 from ulid import ULID
 
+from alexandria import anchors as _anchors
 from alexandria.catalog import get_catalog, get_document, list_documents
 from alexandria.classify import Suggestion, suggest_metadata, suggest_metadata_bulk
 from alexandria.config import Config
@@ -79,6 +80,17 @@ def _suggestion_json(s: Suggestion, applied: bool) -> dict:
         "suggested_tags": list(s.suggested_tags),
         "category_confidence": s.category_confidence,
         "tag_confidences": dict(s.tag_confidences),
+        "category_source": s.category_source,
+        "tag_source": s.tag_source,
+        "anchor_matches": [
+            {
+                "kind": a.kind,
+                "name": a.name,
+                "similarity": a.similarity,
+                "description": a.description,
+            }
+            for a in s.anchor_matches
+        ],
         "neighbors": [
             {
                 "doc_id": n.doc_id,
@@ -493,6 +505,71 @@ def build_api_routes(
 
         return JSONResponse(_suggestion_json(s, applied))
 
+    # ---- anchors --------------------------------------------------------
+
+    def _anchor_json(a) -> dict:
+        return {
+            "kind": a.kind,
+            "name": a.name,
+            "description": a.description,
+            "embed_model": a.embed_model,
+            "created_at": a.created_at,
+            "updated_at": a.updated_at,
+        }
+
+    async def api_list_anchors(_request: Request) -> JSONResponse:
+        with lock:
+            items = _anchors.list_anchors(conn)
+        return JSONResponse([_anchor_json(a) for a in items])
+
+    async def api_set_anchor(request: Request) -> JSONResponse:
+        kind = request.path_params["kind"]
+        name = request.path_params["name"]
+        try:
+            body = await request.json()
+        except (ValueError, json.JSONDecodeError):
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "body must be an object"}, status_code=400)
+        description = str(body.get("description") or "").strip()
+        if not description:
+            return JSONResponse(
+                {"error": "description is required"}, status_code=400
+            )
+        try:
+            with lock:
+                a = _anchors.set_anchor(conn, cfg, kind, name, description)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse(_anchor_json(a))
+
+    async def api_delete_anchor(request: Request) -> JSONResponse:
+        kind = request.path_params["kind"]
+        name = request.path_params["name"]
+        with lock:
+            ok = _anchors.delete_anchor(conn, kind, name)
+        return JSONResponse({"deleted": ok})
+
+    async def api_import_anchors(request: Request) -> JSONResponse:
+        try:
+            body = await request.json()
+        except (ValueError, json.JSONDecodeError):
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        items = body.get("anchors") if isinstance(body, dict) else body
+        if not isinstance(items, list):
+            return JSONResponse(
+                {"error": "expected {\"anchors\": [...]} or a top-level list"},
+                status_code=400,
+            )
+        with lock:
+            r = _anchors.import_anchors(conn, cfg, items)
+        return JSONResponse(r)
+
+    async def api_export_anchors(_request: Request) -> JSONResponse:
+        with lock:
+            items = _anchors.export_anchors(conn)
+        return JSONResponse({"anchors": items})
+
     async def api_suggest_metadata_bulk(request: Request) -> JSONResponse:
         try:
             body = await request.json()
@@ -588,5 +665,10 @@ def build_api_routes(
               api_suggest_metadata, methods=["POST"]),
         Route("/api/suggest-metadata-bulk",
               api_suggest_metadata_bulk, methods=["POST"]),
+        Route("/api/anchors", api_list_anchors, methods=["GET"]),
+        Route("/api/anchors/import", api_import_anchors, methods=["POST"]),
+        Route("/api/anchors/export", api_export_anchors, methods=["GET"]),
+        Route("/api/anchors/{kind}/{name}", api_set_anchor, methods=["PUT"]),
+        Route("/api/anchors/{kind}/{name}", api_delete_anchor, methods=["DELETE"]),
         Route("/files/{doc_id}", api_get_original, methods=["GET"]),
     ]

@@ -16,6 +16,7 @@ from mcp.server.fastmcp import FastMCP
 
 from datetime import datetime, timezone
 
+from alexandria import anchors as _anchors
 from alexandria.catalog import get_catalog, get_document, list_documents
 from alexandria.classify import Suggestion, suggest_metadata, suggest_metadata_bulk
 from alexandria.config import Config, load as load_config
@@ -459,6 +460,17 @@ def _suggestion_payload(s: Suggestion, applied: bool | None = None) -> dict[str,
         "suggested_tags": list(s.suggested_tags),
         "category_confidence": s.category_confidence,
         "tag_confidences": dict(s.tag_confidences),
+        "category_source": s.category_source,
+        "tag_source": s.tag_source,
+        "anchor_matches": [
+            {
+                "kind": a.kind,
+                "name": a.name,
+                "similarity": a.similarity,
+                "description": a.description,
+            }
+            for a in s.anchor_matches
+        ],
         "neighbors": [
             {
                 "doc_id": n.doc_id,
@@ -471,6 +483,81 @@ def _suggestion_payload(s: Suggestion, applied: bool | None = None) -> dict[str,
         ],
         "applied": s.applied if applied is None else applied,
     }
+
+
+def _anchor_payload(a) -> dict[str, Any]:
+    return {
+        "kind": a.kind,
+        "name": a.name,
+        "description": a.description,
+        "embed_model": a.embed_model,
+        "created_at": a.created_at,
+        "updated_at": a.updated_at,
+    }
+
+
+@mcp.tool()
+def list_anchors_tool() -> list[dict[str, Any]]:
+    """List every user-authored label anchor (categories + tags).
+
+    Anchors are natural-language descriptions of what a label means; the
+    classifier compares document embeddings against anchor embeddings
+    for a zero-shot signal that doesn't depend on existing (possibly
+    noisy) document labels.
+    """
+    _, conn = _get()
+    with _lock:
+        return [_anchor_payload(a) for a in _anchors.list_anchors(conn)]
+
+
+@mcp.tool()
+def set_anchor_tool(kind: str, name: str, description: str) -> dict[str, Any]:
+    """Create or update a label anchor.
+
+    Args:
+        kind: "category" or "tag".
+        name: Label name (e.g. "bills", "physics").
+        description: Short natural-language definition. A vague description
+            ("physics stuff") matches everything weakly; a specific one
+            ("condensed matter and quantum field theory papers, not
+            general science news") matches sharply. Iterate.
+
+    Re-embeds unconditionally on each write. Returns the stored anchor.
+    """
+    cfg, conn = _get()
+    with _lock:
+        a = _anchors.set_anchor(conn, cfg, kind, name, description)
+    return _anchor_payload(a)
+
+
+@mcp.tool()
+def delete_anchor_tool(kind: str, name: str) -> dict[str, Any]:
+    """Delete a label anchor by (kind, name). Idempotent."""
+    _, conn = _get()
+    with _lock:
+        ok = _anchors.delete_anchor(conn, kind, name)
+    return {"deleted": ok}
+
+
+@mcp.tool()
+def import_anchors_tool(anchors: list[dict[str, Any]]) -> dict[str, Any]:
+    """Bulk-upsert anchors from a list of {kind, name, description} objects.
+
+    Existing anchors with the same (kind, name) are overwritten. Malformed
+    items are collected into ``errors`` and don't abort the import.
+    """
+    cfg, conn = _get()
+    with _lock:
+        return _anchors.import_anchors(conn, cfg, anchors)
+
+
+@mcp.tool()
+def export_anchors_tool() -> list[dict[str, Any]]:
+    """Export every anchor as a portable JSON list — no embeddings, just
+    source descriptions. Round-trips through ``import_anchors_tool``."""
+    _, conn = _get()
+    with _lock:
+        return _anchors.export_anchors(conn)
 
 
 @mcp.tool()
