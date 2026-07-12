@@ -203,13 +203,16 @@ def _load_all_embeddings(
 def score_anchors(
     conn: sqlite3.Connection,
     doc_vec: np.ndarray,
-    min_similarity: float,
+    min_similarity_category: float,
+    min_similarity_tag: float,
 ) -> list[AnchorMatch]:
     """Cosine-score every anchor against a unit-normalized doc vector.
 
-    Returns only matches at or above ``min_similarity``, sorted descending.
-    An empty anchor table returns an empty list — the classifier then
-    falls back to neighbor voting.
+    Categories and tags carry different similarity floors because they
+    have different UX consequences (see ``ClassifyConfig``). Returns
+    matches at or above each kind's floor, sorted descending. An empty
+    anchor table returns an empty list — the classifier then falls back
+    to neighbor voting.
     """
     meta, matrix = _load_all_embeddings(conn)
     if not meta:
@@ -220,7 +223,11 @@ def score_anchors(
     out: list[AnchorMatch] = []
     for (kind, name, desc), sim in zip(meta, sims, strict=True):
         s = float(sim)
-        if s >= min_similarity:
+        floor = (
+            min_similarity_category if kind == "category"
+            else min_similarity_tag
+        )
+        if s >= floor:
             out.append(AnchorMatch(kind=kind, name=name, similarity=s, description=desc))
     out.sort(key=lambda a: a.similarity, reverse=True)
     return out

@@ -110,7 +110,9 @@ def test_score_anchors_returns_matches_above_threshold(cfg, conn):
     )[0]
     doc_vec = doc_vec / (np.linalg.norm(doc_vec) or 1.0)
 
-    matches = score_anchors(conn, doc_vec, min_similarity=0.0)
+    matches = score_anchors(conn, doc_vec,
+                            min_similarity_category=0.0,
+                            min_similarity_tag=0.0)
     # Two anchors, both should have some score; the physics one should rank
     # higher than the bills one.
     names_ranked = [m.name for m in matches]
@@ -121,7 +123,9 @@ def test_score_anchors_empty_when_none_stored(cfg, conn):
     import numpy as np
     doc_vec = np.zeros(cfg.embeddings.dim, dtype=np.float32)
     doc_vec[0] = 1.0
-    assert score_anchors(conn, doc_vec, min_similarity=0.0) == []
+    assert score_anchors(conn, doc_vec,
+                         min_similarity_category=0.0,
+                         min_similarity_tag=0.0) == []
 
 
 # ---- classifier integration ----------------------------------------------

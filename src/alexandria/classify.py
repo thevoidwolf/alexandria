@@ -220,7 +220,11 @@ def suggest_metadata(
     # Score user-authored anchors first — they override neighbors when
     # confident enough. Empty anchor set → this returns [] and the neighbor
     # pass drives suggestions as before.
-    anchor_matches = score_anchors(conn, mean_vec, cfg.classify.anchor_min_similarity)
+    anchor_matches = score_anchors(
+        conn, mean_vec,
+        min_similarity_category=cfg.classify.anchor_min_similarity_category,
+        min_similarity_tag=cfg.classify.anchor_min_similarity_tag,
+    )
     category_anchors = [a for a in anchor_matches if a.kind == "category"]
     tag_anchors = [a for a in anchor_matches if a.kind == "tag"]
 

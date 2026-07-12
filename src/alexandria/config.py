@@ -101,10 +101,14 @@ class ClassifyConfig:
     tag_min_fraction: float = 0.35        # tag must be on ≥ this fraction of neighbors
     category_min_fraction: float = 0.35   # same for category (majority pick)
     max_tags: int = 7                     # cap suggestion at this many tags
-    # Cosine-similarity floor for an anchor to count. BGE-small on
-    # unit-normalized text tends to land 0.3–0.5 for topically-related
-    # pairs; 0.45 favors precision over recall. Tune per-corpus.
-    anchor_min_similarity: float = 0.45
+    # Cosine-similarity floor for an anchor to count. Categories have
+    # a lower bar than tags because a doc *must* have a category — a
+    # weak-match top pick is still the best-available answer. Tags are
+    # additive and optional, so a weak match is worse than no tag; the
+    # bar is higher to keep spillover (adjacent-but-absent topics
+    # scoring in the 0.5s) out of the tag set.
+    anchor_min_similarity_category: float = 0.45
+    anchor_min_similarity_tag: float = 0.60
     # When True, after each ingest the classifier runs and attaches a
     # suggestion to the job's result JSON. Never auto-applies. Skips
     # duplicates and docs where the user supplied category/tags at ingest.

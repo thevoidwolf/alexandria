@@ -1,0 +1,205 @@
+{
+  "anchors": [
+    {
+      "kind": "category",
+      "name": "research",
+      "description": "Academic or scientific research including preprints, journal articles, conference papers, and technical reports. Structured with abstract, methodology, results, discussion, and citations to prior work."
+    },
+    {
+      "kind": "category",
+      "name": "finance",
+      "description": "Financial documents such as bills, invoices, receipts, bank statements, credit card statements, tax forms, and expense reports. Contains monetary amounts, account numbers, billing periods, and due dates."
+    },
+    {
+      "kind": "category",
+      "name": "legal",
+      "description": "Legally binding or legally significant documents: contracts, agreements, terms of service, end-user license agreements, deeds, powers of attorney, wills, and corporate filings. Formal language with defined parties and clauses."
+    },
+    {
+      "kind": "category",
+      "name": "reference",
+      "description": "Reference material and technical documentation: user manuals, developer documentation, specifications, cheat sheets, product guides, and how-to instructions. Meant to be consulted rather than read straight through."
+    },
+    {
+      "kind": "category",
+      "name": "fiction",
+      "description": "Prose fiction including novels, short stories, novellas, and narrative writing. Contains characters, dialogue, scenes, and a plot. Not journalism or non-fiction."
+    },
+    {
+      "kind": "category",
+      "name": "cooking",
+      "description": "Cookbooks and recipe collections. Contains ingredient lists, quantities, preparation steps, cooking times, temperatures, and yields."
+    },
+    {
+      "kind": "category",
+      "name": "gamedev",
+      "description": "Game development material: design documents, mechanics specifications, level design notes, asset pipelines, engine documentation, and postmortems on shipped games."
+    },
+    {
+      "kind": "category",
+      "name": "personal",
+      "description": "Personal records, private correspondence, identification numbers, account credentials, health documentation, and other material that pertains specifically to the individual's life and is not meant for public sharing."
+    },
+    {
+      "kind": "category",
+      "name": "correspondence",
+      "description": "Letters, formal emails, memos, and written communications between named parties. Has an identifiable sender, recipient, date, and subject or message body."
+    },
+    {
+      "kind": "category",
+      "name": "article",
+      "description": "Journalistic articles, blog posts, magazine pieces, and news stories. Reports on people, events, or topics with a byline and publication venue. Not academically structured."
+    },
+
+    {
+      "kind": "tag",
+      "name": "physics",
+      "description": "Physics topics including classical mechanics, thermodynamics, electromagnetism, optics, relativity, quantum mechanics, particle physics, and astrophysics. Mathematical treatment of physical phenomena."
+    },
+    {
+      "kind": "tag",
+      "name": "electronics",
+      "description": "Electronic engineering: analog and digital circuits, schematics, PCB design, components (resistors, capacitors, transistors, integrated circuits), embedded systems, microcontrollers, and signal processing."
+    },
+    {
+      "kind": "tag",
+      "name": "ai",
+      "description": "Artificial intelligence: neural networks, deep learning architectures, model training, reinforcement learning, computer vision, natural language processing, and AI applications across domains."
+    },
+    {
+      "kind": "tag",
+      "name": "llms",
+      "description": "Large language models specifically: transformer architectures, tokenization, attention mechanisms, pretraining and fine-tuning, RLHF, prompting techniques, and inference optimization."
+    },
+    {
+      "kind": "tag",
+      "name": "machine learning",
+      "description": "Classical machine learning: supervised and unsupervised methods, feature engineering, model evaluation metrics, cross-validation, decision trees, SVMs, clustering, and dimensionality reduction."
+    },
+    {
+      "kind": "tag",
+      "name": "vrchat",
+      "description": "VRChat platform content: avatar creation, world building, VRChat SDK, community events, avatar dynamics, physbones, and platform-specific features and workflows."
+    },
+    {
+      "kind": "tag",
+      "name": "unity",
+      "description": "Unity game engine: C# scripting, editor tools, prefabs, scene management, rendering pipelines (URP, HDRP, Built-in), animation, physics, ScriptableObjects, and Asset Store workflows."
+    },
+    {
+      "kind": "tag",
+      "name": "udon",
+      "description": "VRChat Udon scripting: UdonSharp, node graphs, Udon behaviours, event handlers, networking through synced variables and RPCs, and VRChat-specific runtime logic."
+    },
+    {
+      "kind": "tag",
+      "name": "fringe science",
+      "description": "Fringe or non-mainstream scientific claims: unconventional physics theories, suppressed inventions, alternative energy, ether theories, and heterodox research not accepted by mainstream science."
+    },
+    {
+      "kind": "tag",
+      "name": "free energy",
+      "description": "Free energy devices, over-unity systems, zero-point energy extraction, and perpetual motion research. Often related to fringe physics and Tesla-inspired engineering."
+    },
+    {
+      "kind": "tag",
+      "name": "time travel",
+      "description": "Time travel physics and speculation: closed timelike curves, tachyons, wormholes, chronology protection, grandfather paradoxes, and time-machine design proposals."
+    },
+    {
+      "kind": "tag",
+      "name": "engineering",
+      "description": "Engineering disciplines: mechanical, electrical, civil, aerospace, or chemical. Design analysis, materials selection, load calculations, industry standards, and safety codes."
+    },
+    {
+      "kind": "tag",
+      "name": "game development",
+      "description": "Game development topics beyond any specific engine: gameplay programming, game design theory, level design, procedural generation, game AI, and industry practices."
+    },
+    {
+      "kind": "tag",
+      "name": "programming",
+      "description": "Software development in any language: source code, algorithms, data structures, libraries, frameworks, build systems, and programming language reference material."
+    },
+    {
+      "kind": "tag",
+      "name": "cryptography",
+      "description": "Cryptography: symmetric and asymmetric encryption, hashing, digital signatures, key exchange protocols, cryptanalysis, and post-quantum cryptography."
+    },
+    {
+      "kind": "tag",
+      "name": "security",
+      "description": "Information security: vulnerabilities, exploits, malware analysis, penetration testing, defensive engineering, threat modeling, and incident response."
+    },
+    {
+      "kind": "tag",
+      "name": "mathematics",
+      "description": "Mathematics: algebra, calculus, geometry, number theory, combinatorics, statistics, linear algebra, differential equations, and formal proofs with theorems and derivations."
+    },
+    {
+      "kind": "tag",
+      "name": "networking",
+      "description": "Computer networking: TCP/IP, routing protocols, switching, wireless standards (WiFi, Bluetooth, cellular), network security, DNS, VPNs, and network architecture."
+    },
+    {
+      "kind": "tag",
+      "name": "tesla",
+      "description": "Nikola Tesla's inventions and Tesla-inspired engineering: Tesla coils, wireless power transmission, alternating current motors, and modern research building on Tesla's work."
+    },
+    {
+      "kind": "tag",
+      "name": "hardware",
+      "description": "Computer hardware and hardware architecture: CPUs, GPUs, memory hierarchies, storage devices, motherboards, peripherals, and processor microarchitecture."
+    },
+    {
+      "kind": "tag",
+      "name": "hobby electronics",
+      "description": "Hobbyist electronics and maker projects: Arduino, Raspberry Pi, ESP32, homebrew circuits, DIY projects, breadboard prototyping, and 3D-printed enclosures."
+    },
+    {
+      "kind": "tag",
+      "name": "manual",
+      "description": "Product or software user manuals: installation instructions, operating procedures, troubleshooting guides, safety warnings, and specifications for a specific product."
+    },
+    {
+      "kind": "tag",
+      "name": "recipe",
+      "description": "An individual cooking recipe or small recipe collection. Includes an ingredient list with quantities, step-by-step preparation, cooking time, and yield or servings."
+    },
+    {
+      "kind": "tag",
+      "name": "fanfiction",
+      "description": "Fan-created fiction based on existing franchises, series, characters, or settings. Includes crossovers, alternate universes, self-inserts, and character-focused narrative writing."
+    },
+    {
+      "kind": "tag",
+      "name": "recovery codes",
+      "description": "Multi-factor authentication backup codes, one-time recovery codes, or account recovery keys for online services. Typically a list of short alphanumeric strings."
+    },
+    {
+      "kind": "tag",
+      "name": "tax",
+      "description": "Tax documents and tax-related material: tax returns, W-2s, 1099s, receipts for deductions, tax planning notes, and correspondence with tax authorities."
+    },
+    {
+      "kind": "tag",
+      "name": "medical",
+      "description": "Medical records: prescriptions, lab results, doctor's notes, insurance claims, immunization records, imaging reports, and health-related paperwork."
+    },
+    {
+      "kind": "tag",
+      "name": "contract",
+      "description": "Signed or draft contracts: employment agreements, service contracts, non-disclosure agreements, lease agreements, and other bilateral or multilateral agreements with named parties."
+    },
+    {
+      "kind": "tag",
+      "name": "api documentation",
+      "description": "Software API reference documentation: endpoint specifications, request and response formats, authentication requirements, rate limits, error codes, and usage examples."
+    },
+    {
+      "kind": "tag",
+      "name": "specification",
+      "description": "Formal technical specifications and standards documents: RFCs, ISO standards, IEEE standards, W3C recommendations, and similar normative reference material with precise language."
+    }
+  ]
+}
