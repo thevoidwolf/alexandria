@@ -166,23 +166,27 @@ def test_bulk_apply_writes_and_marks_applied(bills_corpus):
 # ---- ingest hook --------------------------------------------------------
 
 
-def test_ingest_hook_off_by_default(cfg, conn, corpus_dir: Path, fake_embed):
-    """With suggest_on_ingest=false, ingest_fetched result has no suggestion field."""
+def test_ingest_hook_off_when_disabled(cfg, conn, corpus_dir: Path, fake_embed):
+    """With suggest_on_ingest explicitly false, no suggestion is attached."""
+    from dataclasses import replace as dc_replace
+    disabled_cfg = dc_replace(
+        cfg, classify=dc_replace(cfg.classify, suggest_on_ingest=False)
+    )
     # Seed neighbors first so a suggestion COULD happen if enabled.
-    ingest_file(corpus_dir / "plain.txt", conn, cfg,
+    ingest_file(corpus_dir / "plain.txt", conn, disabled_cfg,
                 category="bills", tags=["utility"])
-    ingest_file(corpus_dir / "second-bill.txt", conn, cfg,
+    ingest_file(corpus_dir / "second-bill.txt", conn, disabled_cfg,
                 category="bills", tags=["utility", "water"])
 
     # New unlabeled doc; simulate the jobs.py flow.
     from alexandria.web.jobs import JobQueue
     import threading
     lock = threading.Lock()
-    q = JobQueue(cfg, conn, lock)
+    q = JobQueue(disabled_cfg, conn, lock)
 
     unlabeled = corpus_dir / "third-bill.txt"
     unlabeled.write_text("Account balance due. Utility statement.\n")
-    r = ingest_file(unlabeled, conn, cfg)
+    r = ingest_file(unlabeled, conn, disabled_cfg)
     with lock:
         suggestion = q._maybe_suggest(r, category=None, tags=[])
     assert suggestion is None

@@ -112,9 +112,11 @@ class ClassifyConfig:
     # When True, after each ingest the classifier runs and attaches a
     # suggestion to the job's result JSON. Never auto-applies. Skips
     # duplicates and docs where the user supplied category/tags at ingest.
-    # Off by default: only useful once the corpus has a trustworthy
-    # seed of labeled documents.
-    suggest_on_ingest: bool = False
+    # The home page reads this from the job SSE payload and offers
+    # one-click apply beneath the row; empty-corpus cases fall back to
+    # anchor-only matches and are safely skipped when nothing clears
+    # the threshold.
+    suggest_on_ingest: bool = True
 
 
 @dataclass(frozen=True)

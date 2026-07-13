@@ -44,11 +44,16 @@
     <div class="row" style="margin-top: 10px;">
       <div>
         <label class="dim" style="font-size: 12px;">Category</label>
-        <input type="text" id="category" placeholder="e.g. research">
+        <input type="text" id="category" placeholder="e.g. research" list="cats-list" autocomplete="off">
+        <datalist id="cats-list">
+          {% for c in catalog.categories %}<option value="{{ c.name }}">{% endfor %}
+        </datalist>
       </div>
       <div>
         <label class="dim" style="font-size: 12px;">Tags (comma-separated)</label>
-        <input type="text" id="tags" placeholder="e.g. paper, arxiv">
+        <input type="text" id="tags" placeholder="e.g. paper, arxiv" list="tags-list" autocomplete="off">
+        <datalist id="tags-list"></datalist>
+        <div id="tags-pool" hidden>{% for t in catalog.tags %}<span data-tag="{{ t.name }}"></span>{% endfor %}</div>
       </div>
     </div>
   </details>
@@ -70,7 +75,11 @@
       <tbody id="jobs-body">
         {% if recent_jobs %}
           {% for j in recent_jobs %}
-          <tr data-job-id="{{ j.id }}">
+          <tr data-job-id="{{ j.id }}"
+              {%- if j.status == 'done' and j.result and j.result.get('suggested_metadata') and not j.result.get('was_duplicate') %}
+              data-doc-id="{{ j.result.doc_id }}"
+              data-suggestion='{{ j.result.suggested_metadata | tojson }}'
+              {%- endif %}>
             <td>{{ describe_job(j) }}</td>
             <td class="status status-{{ j.status }}"><span class="pill">{{ j.status }}</span></td>
             <td class="mono dim">{{ j.created_at }}</td>
@@ -92,6 +101,35 @@
   const categoryEl = document.getElementById('category');
   const tagsEl = document.getElementById('tags');
   const jobsBody = document.getElementById('jobs-body');
+
+  // Datalist matches the whole input value, so for a comma-separated tags
+  // field we rebuild options on each keystroke as `${prefix}${tag}` — the
+  // browser then matches the trailing token and picking an option rewrites
+  // the whole input to include the completed tag.
+  const tagPool = Array.from(
+    document.querySelectorAll('#tags-pool span[data-tag]')
+  ).map((el) => el.dataset.tag);
+  const tagsList = document.getElementById('tags-list');
+  const rebuildTagsList = () => {
+    const value = tagsEl.value;
+    const lastComma = value.lastIndexOf(',');
+    const prefix = lastComma < 0 ? '' : value.slice(0, lastComma + 1) + ' ';
+    const partial = value.slice(lastComma + 1).trim().toLowerCase();
+    const alreadyUsed = new Set(
+      value.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean)
+    );
+    const opts = [];
+    for (const tag of tagPool) {
+      const lower = tag.toLowerCase();
+      if (alreadyUsed.has(lower) && !lower.startsWith(partial)) continue;
+      if (partial && !lower.startsWith(partial)) continue;
+      opts.push(`<option value="${prefix}${tag}">`);
+      if (opts.length >= 20) break;
+    }
+    tagsList.innerHTML = opts.join('');
+  };
+  tagsEl.addEventListener('input', rebuildTagsList);
+  tagsEl.addEventListener('focus', rebuildTagsList);
 
   function statusClass(s) { return 'status status-' + s; }
 
@@ -127,7 +165,112 @@
     row.children[1].firstElementChild.textContent = job.status;
     row.children[2].textContent = job.created_at;
     row.children[3].textContent = detail(job);
+
+    const suggestion =
+      job.status === 'done' && job.result && !job.result.was_duplicate
+        ? job.result.suggested_metadata
+        : null;
+    if (suggestion && job.result.doc_id) {
+      renderSuggestion(row, job.id, job.result.doc_id, suggestion);
+    } else if (job.status === 'error' || job.status === 'cancelled') {
+      removeSuggestion(job.id);
+    }
   }
+
+  const fmtPct = (f) => Math.round((f || 0) * 100) + '%';
+
+  function suggestionRowHTML(docId, suggestion) {
+    const chips = [];
+    if (suggestion.suggested_category) {
+      chips.push(
+        `<span class="chip">${escapeHTML(suggestion.suggested_category)} ` +
+        `<span class="mono dim" style="font-size:10px;">${fmtPct(suggestion.category_confidence)}</span></span>`
+      );
+    }
+    const tagStyle = 'style="background: transparent; border: 1px solid var(--line); color: var(--dim);"';
+    for (const tag of (suggestion.suggested_tags || [])) {
+      const conf = suggestion.tag_confidences ? suggestion.tag_confidences[tag] : 0;
+      chips.push(
+        `<span class="chip" ${tagStyle}>${escapeHTML(tag)} ` +
+        `<span class="mono dim" style="font-size:10px;">${fmtPct(conf)}</span></span>`
+      );
+    }
+    return `
+      <td colspan="4" style="padding: 6px 12px 10px 30px; border-top: none;">
+        <div class="suggest-inline" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span class="dim" style="font-size: 12px;">Suggested</span>
+          ${chips.join(' ') || '<span class="dim" style="font-size:12px;">(nothing above threshold)</span>'}
+          <span style="flex: 1 1 auto;"></span>
+          <button type="button" data-action="apply" data-doc-id="${escapeAttr(docId)}"
+            style="font-size: 12px; padding: 4px 10px;">Apply</button>
+          <a href="/documents/${encodeURIComponent(docId)}" class="linklike"
+            style="font-size: 12px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 4px; text-decoration: none; color: var(--dim);">Review</a>
+        </div>
+      </td>
+    `;
+  }
+
+  function renderSuggestion(mainRow, jobId, docId, suggestion) {
+    let sRow = jobsBody.querySelector(`tr[data-suggest-for="${jobId}"]`);
+    if (!sRow) {
+      sRow = document.createElement('tr');
+      sRow.dataset.suggestFor = jobId;
+      mainRow.after(sRow);
+    }
+    sRow.innerHTML = suggestionRowHTML(docId, suggestion);
+    mainRow.dataset.docId = docId;
+  }
+
+  function removeSuggestion(jobId) {
+    const sRow = jobsBody.querySelector(`tr[data-suggest-for="${jobId}"]`);
+    if (sRow) sRow.remove();
+  }
+
+  function escapeHTML(s) {
+    return String(s).replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+    );
+  }
+  function escapeAttr(s) {
+    return String(s).replace(/"/g, '&quot;');
+  }
+
+  jobsBody.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-action="apply"]');
+    if (!btn) return;
+    const docId = btn.dataset.docId;
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Applying…';
+    try {
+      const r = await fetch(`/api/documents/${encodeURIComponent(docId)}/suggest-metadata`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ apply: true }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      btn.textContent = 'Applied ✓';
+      const wrap = btn.closest('.suggest-inline');
+      if (wrap) wrap.style.opacity = '0.55';
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = original;
+      showBanner('error', 'Apply failed: ' + err.message, 5000);
+    }
+  });
+
+  // SSR rows carry data-suggestion for jobs whose ingest already produced a
+  // suggestion — render those on load so refreshes are equivalent to live SSE.
+  jobsBody.querySelectorAll('tr[data-suggestion]').forEach((row) => {
+    try {
+      const suggestion = JSON.parse(row.dataset.suggestion);
+      const docId = row.dataset.docId;
+      if (docId && suggestion) {
+        renderSuggestion(row, row.dataset.jobId, docId, suggestion);
+      }
+    } catch {}
+  });
 
   const banners = document.getElementById('upload-banners');
 
