@@ -7,3 +7,7 @@ __pycache__/
 dist/
 build/
 .tmp/
+
+# Claude Desktop extension build artifacts (source in clients/claude-desktop is enough)
+node_modules/
+*.mcpb

@@ -1,0 +1,10 @@
+# Files excluded from the packed .mcpb bundle.
+README.md
+.mcpbignore
+*.mcpb
+
+# npm/dev cruft (node_modules IS bundled, but not these)
+server/package-lock.json
+**/.DS_Store
+**/*.map
+**/*.ts

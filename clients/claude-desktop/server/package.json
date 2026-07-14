@@ -1,0 +1,12 @@
+{
+  "name": "alexandria-claude-desktop-bridge",
+  "version": "1.0.1",
+  "description": "stdio <-> streamable-HTTP bridge that lets Claude Desktop reach a remote Alexandria MCP server",
+  "main": "index.js",
+  "type": "commonjs",
+  "private": true,
+  "license": "MIT",
+  "dependencies": {
+    "mcp-remote": "^0.1.38"
+  }
+}
