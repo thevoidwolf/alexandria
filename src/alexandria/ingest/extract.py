@@ -197,7 +197,6 @@ def _extract_pdf_marker(
         for var in _SURYA_BATCH_VARS:
             os.environ[var] = str(batch_size)
 
-    import marker
     from marker.converters.pdf import PdfConverter
     from marker.models import create_model_dict
     from marker.output import text_from_rendered

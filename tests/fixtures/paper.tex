@@ -1,0 +1,68 @@
+% Synthetic test fixture for Alexandria's PDF extraction tests.
+%
+% Built with default Computer Modern so the compiled PDF embeds the cmmi/cmsy/cmex
+% math fonts that the math-font detector (_has_math_fonts) keys on. It deliberately
+% uses no hyperref/\pdfinfo title, so the PDF carries no /Title metadata (mirroring
+% typical pdfTeX output, which the extraction test asserts on).
+%
+% Regenerate reproducibly (fixed 2025 /CreationDate) with:
+%   SOURCE_DATE_EPOCH=$(date -u -d 2025-08-08 +%s) FORCE_SOURCE_DATE=1 \
+%     pdflatex -interaction=nonstopmode paper.tex
+%
+% All content below is fictional and authored for this fixture.
+\documentclass[11pt]{article}
+
+\title{A Sample Paper on Vector Fields}
+\author{Ada Fixtura \\ Alexandria Test Fixtures}
+\date{2025}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This is a synthetic document used only to exercise Alexandria's PDF extraction
+pipeline. It carries a few genuine equations so the compiled PDF embeds Computer
+Modern math fonts, and enough prose to make chunking meaningful.
+\end{abstract}
+
+\section{Introduction}
+
+We consider a toy magnetostatic field so the text contains real mathematics
+rather than placeholder symbols. The magnetic field $\vec{B}$ produced by a
+steady current follows the Biot--Savart law, and its axial component $B_z$ can
+be written compactly in terms of a scalar potential $\Phi$. The Greek letters
+and operators below guarantee a nonzero math-symbol density, and the equations
+force the math fonts into the font resource dictionary.
+
+\section{A toy field equation}
+
+The field of a current loop of current $I$ is
+\begin{equation}
+\vec{B}(\vec{r}) = \frac{\mu_0}{4\pi} \oint \frac{I\, d\vec{l} \times \hat{r}}{r^2},
+\end{equation}
+and along the symmetry axis the component reduces to
+\begin{equation}
+B_z = \alpha\, \frac{\partial \Phi}{\partial z}, \qquad
+\alpha = \frac{\mu_0 I}{2}.
+\end{equation}
+Here $\alpha$ is a constant, $\Phi$ is the scalar potential, and the summation
+$\sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}$ appears purely to add a
+few more symbols to the page.
+
+\section{Discussion}
+
+The point of this fixture is not physics but coverage. A real extractor must
+survive a multi-page, \LaTeX-generated PDF: hyphenated line breaks, ligatures
+such as \textit{efficient} and \textit{affordable}, and inline math mixed with
+ordinary prose. None of the numbers here mean anything; they exist so that the
+normalizer, the chunker, and the math-density heuristics all have something
+representative to chew on.
+
+We repeat a little more prose to push the document onto a second page, because
+the extraction test treats this as a multi-page paper. Retrieval-augmented
+generation, vector databases, and keyword search over an inverted index are all
+mentioned here so the fixture reads like a plausible technical note rather than
+lorem ipsum. The conclusion, such as it is, is that vector fields make excellent
+excuses for embedding math fonts.
+
+\end{document}

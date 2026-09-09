@@ -320,7 +320,7 @@ def get_original_tool(
     elif base is None:
         url_unavailable_reason = (
             "no public URL: set [network] public_base_url to your reachable "
-            "hostname (e.g. https://alexandria.suki.tail-net.ts)"
+            "hostname (e.g. https://alexandria.example.com)"
         )
     else:
         secret = get_or_create_session_secret(cfg)

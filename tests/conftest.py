@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from alexandria.config import Config, HttpConfig, load as load_config
+from alexandria.config import Config, load as load_config
 from alexandria.db import connect
 
 FIXTURES = Path(__file__).parent / "fixtures"

@@ -55,7 +55,7 @@ def test_walker_no_recursion_ignores_subdirs(
     sub = corpus_dir / "sub"
     sub.mkdir()
     (sub / "deep.txt").write_text("deep content unique text")
-    r_recursive = ingest_folder(corpus_dir, conn, cfg, recursive=True)
+    ingest_folder(corpus_dir, conn, cfg, recursive=True)
     assert any("deep.txt" in u for u in [
         row[0] for row in conn.execute("SELECT source_uri FROM document_sources")
     ])

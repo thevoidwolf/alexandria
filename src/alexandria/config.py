@@ -50,8 +50,8 @@ class PdfExtractorConfig:
 
     # Thermal safety knobs for marker (M10). Only affect marker code paths.
     marker_batch_size: int = 0            # 0 = surya defaults (device-picked);
-                                          # 1 = serial (safest on thermal-constrained
-                                          # GPUs like the RTX A1000); 2-4 balances.
+                                          # 1 = serial (safest on small,
+                                          # thermal-constrained GPUs); 2-4 balances.
     marker_cooldown_seconds: float = 0.0  # sleep after each marker run; helps
                                           # folder ingest by letting the card cool
                                           # between docs. 0 = no cooldown.
@@ -71,7 +71,7 @@ class NetworkConfig:
                                              # (network-visible IPs, MagicDNS names,
                                              # reverse-proxy hostnames). Loopback is
                                              # always allowed.
-    public_base_url: str | None = None       # e.g. "https://alexandria.suki.tail-net.ts".
+    public_base_url: str | None = None       # e.g. "https://alexandria.example.com".
                                              # Used to build shareable signed-URL
                                              # responses for get_original. When unset,
                                              # falls back to "http://<host>:<port>" only

@@ -3,8 +3,8 @@
   "name": "alexandria",
   "display_name": "Alexandria",
   "version": "1.0.1",
-  "description": "Search and retrieve from the Alexandria knowledge store hosted on suki.",
-  "long_description": "Bridges Claude Desktop to the remote Alexandria MCP server (streamable HTTP) running on suki over Tailscale. Because Claude Desktop config only speaks stdio and Alexandria authenticates with a static bearer token over plain HTTP (no OAuth, no TLS), this extension runs mcp-remote under Claude Desktop's bundled Node to proxy stdio <-> the remote endpoint. The bearer token is stored securely and injected via an environment variable.",
+  "description": "Search and retrieve from a remote Alexandria knowledge store.",
+  "long_description": "Bridges Claude Desktop to a remote Alexandria MCP server (streamable HTTP), e.g. one reachable over a Tailscale/WireGuard mesh. Because Claude Desktop config only speaks stdio and Alexandria authenticates with a static bearer token over plain HTTP (no OAuth, no TLS), this extension runs mcp-remote under Claude Desktop's bundled Node to proxy stdio <-> the remote endpoint. The bearer token is stored securely and injected via an environment variable.",
   "author": {
     "name": "Voidwolf"
   },
@@ -26,7 +26,7 @@
     "token": {
       "type": "string",
       "title": "Auth token",
-      "description": "Alexandria MCP bearer token (contents of ~/.local/share/alexandria/auth_token on suki)",
+      "description": "Alexandria MCP bearer token (contents of ~/.local/share/alexandria/auth_token on the server)",
       "sensitive": true,
       "required": true
     },
@@ -35,7 +35,7 @@
       "title": "Server URL",
       "description": "Alexandria MCP endpoint (streamable HTTP)",
       "required": false,
-      "default": "http://suki:8765/mcp"
+      "default": "http://your-server:8765/mcp"
     }
   },
   "compatibility": {

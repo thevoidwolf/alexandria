@@ -19,7 +19,7 @@
 
 const { pathToFileURL } = require('node:url');
 
-const url = process.env.ALEXANDRIA_URL || 'http://suki:8765/mcp';
+const url = process.env.ALEXANDRIA_URL || 'http://your-server:8765/mcp';
 
 if (!process.env.AUTH_TOKEN) {
   console.error('[alexandria] AUTH_TOKEN is not set — set the token in the extension settings.');
@@ -34,7 +34,7 @@ process.argv = [
   proxyPath,
   url,
   '--transport', 'http-only', // Alexandria has no SSE endpoint
-  '--allow-http',             // suki is plain HTTP over Tailscale, no TLS
+  '--allow-http',             // remote endpoint is plain HTTP (e.g. over a Tailscale/WireGuard mesh), no TLS
   '--header', 'Authorization: Bearer ${AUTH_TOKEN}', // expanded from env by mcp-remote
 ];
 

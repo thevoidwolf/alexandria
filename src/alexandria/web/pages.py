@@ -4,7 +4,6 @@ from __future__ import annotations
 import html
 import sqlite3
 import threading
-from dataclasses import asdict
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from urllib.parse import urlencode

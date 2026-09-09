@@ -11,3 +11,6 @@ build/
 # Claude Desktop extension build artifacts (source in clients/claude-desktop is enough)
 node_modules/
 *.mcpb
+
+# Local Claude Code settings (per-machine; may contain local paths)
+.claude/settings.local.json

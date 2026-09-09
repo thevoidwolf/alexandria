@@ -26,7 +26,7 @@ header from the environment, so the token never appears in any process's argv.
 After installing, the extension prompts for:
 
 - **Auth token** — contents of `~/.local/share/alexandria/auth_token` on the server.
-- **Server URL** — defaults to `http://suki:8765/mcp`; change for your host. The host must
+- **Server URL** — defaults to `http://your-server:8765/mcp`; change for your host. The host must
   be reachable from the machine running Claude Desktop (e.g. Tailscale MagicDNS must
   resolve it).
 
@@ -56,7 +56,7 @@ enable it.
 ```sh
 cd clients/claude-desktop/server
 npm install
-AUTH_TOKEN=<token> ALEXANDRIA_URL=http://suki:8765/mcp \
+AUTH_TOKEN=<token> ALEXANDRIA_URL=http://your-server:8765/mcp \
   node -e '/* pipe a JSON-RPC initialize line into: */ require("child_process")' \
   # or simply: printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' | node index.js
 ```

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from alexandria.classify import Suggestion, suggest_metadata
+from alexandria.classify import suggest_metadata
 from alexandria.ingest import ingest_file
 
 

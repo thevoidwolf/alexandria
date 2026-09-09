@@ -151,9 +151,9 @@ def test_extract_pdf_pulls_body_text_and_creation_date():
     assert result.content_type == "pdf"
     assert result.extractor == "pypdf"                    # pdfplumber fallback not triggered
 
-    # Body text survives from a multi-page, LaTeX-generated PDF with math + figures.
-    assert "Observing Electric Currents in Space" in result.text
-    assert "Michael Clarage" in result.text
+    # Body text survives from a multi-page, LaTeX-generated PDF with math.
+    assert "A Sample Paper on Vector Fields" in result.text
+    assert "Ada Fixtura" in result.text
 
     # This PDF has no /Title (typical of pdfTeX output) but does carry /CreationDate.
     assert result.title is None
@@ -239,8 +239,9 @@ def test_has_math_fonts_detects_paper_pdf():
     data = FIXTURES.joinpath("paper.pdf").read_bytes()
     found, font_name = _has_math_fonts(data)
     assert found is True
-    # paper.pdf uses the rtxfonts / txfonts math family (common in physics
-    # papers). Assert on the broader family list our detector supports.
+    # paper.pdf is built with default Computer Modern, so its math embeds the
+    # cmmi/cmsy/cmex family. Assert on the broader family list our detector
+    # supports (rtxfonts/txfonts show up in other physics papers).
     lower = font_name.lower()
     assert any(m in lower for m in ("cmmi", "cmsy", "cmex", "rtxmi", "txsy", "txmi"))
 
@@ -270,12 +271,17 @@ def test_marker_batch_size_sets_env_vars(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
     # Stub the marker import chain so we don't actually load 2GB of weights.
-    fake_marker = type("M", (), {})()
     fake_pdf = type("P", (), {"__init__": lambda self, *a, **k: None,
                               "__call__": lambda self, path: object()})
-    fake_output = lambda rendered: ("stub text", None, [])
-    fake_create = lambda: {}
-    import sys, types
+
+    def fake_output(rendered):
+        return ("stub text", None, [])
+
+    def fake_create():
+        return {}
+
+    import sys
+    import types
     for name, mod in {
         "marker": types.ModuleType("marker"),
         "marker.converters": types.ModuleType("marker.converters"),
@@ -301,7 +307,9 @@ def test_marker_cooldown_calls_sleep(monkeypatch):
     from alexandria.ingest.extract import _extract_pdf_marker
 
     calls = []
-    import sys, types, time as _time_mod
+    import sys
+    import types
+    import time as _time_mod
     for name, mod in {
         "marker": types.ModuleType("marker"),
         "marker.converters": types.ModuleType("marker.converters"),
