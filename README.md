@@ -2,9 +2,57 @@
 
 A local, single-user knowledge store with an MCP interface. Ingests PDFs, HTML,
 plain text and markdown from folders or URLs; deduplicates by content hash;
-retrieves with hybrid keyword + semantic search.
+retrieves with hybrid keyword + semantic search. Everything lives in one portable
+SQLite file — no external services, no cloud.
 
-See [SPEC.md](SPEC.md) for the design document.
+It's designed to be driven by an LLM agent as readily as by a person: the same
+tool surface is exposed over MCP (stdio for local clients, Streamable HTTP for
+remote ones) and a browser UI, all against one corpus.
+
+**Highlights**
+
+- **Hybrid retrieval** — BM25 (SQLite FTS5) fused with vector search (sqlite-vec) via reciprocal rank fusion.
+- **Content-addressed dedup** — three cheap layers collapse the same document across renamed files, re-downloads, and format conversions.
+- **Mixed corpora** — research papers and household bills coexist in one index; categories and tags keep them from crowding each other out.
+- **Zero-shot labelling** — user-authored category/tag "anchors" let a classifier suggest metadata for new documents, with no training step.
+- **Agent-native** — 19 MCP tools spanning ingest, search, curation, and metadata, identical across the stdio and HTTP transports.
+- **Portable** — one SQLite DB (metadata + FTS + vectors) plus a content-addressed blob store; back it up by copying a directory.
+
+See [SPEC.md](SPEC.md) for the full design document.
+
+## How it works
+
+Alexandria is one Python package — ingestion, retrieval, and a catalog — behind a
+shared tool surface. That surface is reachable three ways, all co-hosted on one
+process and one SQLite file: an MCP **stdio** server, an MCP **Streamable-HTTP**
+server, and a **Starlette web UI**.
+
+```
+  MCP stdio ─┐
+  MCP HTTP  ─┼─▶  ingest · search · catalog  ─▶  SQLite (FTS5 + sqlite-vec) + blobs/
+  Web UI    ─┘
+```
+
+**Ingestion** turns each file or URL into deduplicated, searchable text:
+
+```
+fetch → sniff type → hash raw bytes → extract → normalize → hash text → chunk → embed → index
+```
+
+Extraction is per-type (pypdf for PDFs, trafilatura for HTML, UTF-8 for
+text/markdown); normalization applies NFKC folding, ligature expansion, and
+hyphenated-line-break repair — the biggest searchability win for LaTeX-generated
+PDFs. Deduplication runs three layers in order — same source, same raw-byte hash,
+same normalized-text hash — so re-downloads, renamed copies, and PDF↔HTML
+re-exports of the same content collapse to a single document.
+
+**Retrieval** runs two searches per query and fuses them: BM25 over FTS5 and
+cosine nearest-neighbours over sqlite-vec, combined with reciprocal rank fusion
+(no score calibration needed), then filtered by category and tags.
+
+**Storage** is a single portable directory: one SQLite database holding metadata,
+full text, the keyword index, and the vector index, plus a content-addressed
+`blobs/` tree of the original bytes for provenance and re-extraction.
 
 ## Install
 
@@ -93,9 +141,15 @@ tags      = ["utility", "electric"]
 
 ## MCP integration
 
-Alexandria exposes six tools: `ingest_folder_tool`, `ingest_url_tool`,
-`search_tool`, `get_document_tool`, `list_documents_tool`, `get_catalog_tool`.
-The tool surface is identical across both transports.
+Alexandria exposes its full surface over MCP — 19 tools spanning ingestion
+(`ingest_folder_tool`, `ingest_url_tool`), retrieval (`search_tool`,
+`get_document_tool`, `list_documents_tool`, `get_catalog_tool`,
+`get_original_tool`), curation (`delete_document_tool`, `rename_category_tool`,
+`delete_category_tool`, `rename_tag_tool`, `delete_tag_tool`), metadata
+suggestions (`suggest_metadata_tool`, `suggest_metadata_bulk_tool`), and label
+anchors (`list_anchors_tool`, `set_anchor_tool`, `delete_anchor_tool`,
+`import_anchors_tool`, `export_anchors_tool`). The tool surface is identical
+across both transports.
 
 ### Local (stdio)
 
@@ -256,7 +310,7 @@ delete_tag_tool(name)                     → {"affected": N}
 
 ```sh
 uv sync                           # dev deps included in `dev` group
-uv run pytest                     # ~9 s cold, 50 tests
+uv run pytest                     # 263 passing (+1 GPU-gated), ~20 s
 uv run ruff check src tests
 ```
 
@@ -305,3 +359,7 @@ Three cheap layers, always run, in this order:
 
 A duplicate hit updates `last_seen_at`, records the alternate `source_uri`, and
 merges any new tags. Near-duplicate detection (MinHash/simhash) is not implemented.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
