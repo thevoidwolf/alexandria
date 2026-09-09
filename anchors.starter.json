@@ -83,16 +83,6 @@
     },
     {
       "kind": "tag",
-      "name": "free energy",
-      "description": "Free energy devices, over-unity systems, zero-point energy extraction, and perpetual motion research. Often related to fringe physics and Tesla-inspired engineering."
-    },
-    {
-      "kind": "tag",
-      "name": "fringe science",
-      "description": "Fringe or non-mainstream scientific claims: unconventional physics theories, suppressed inventions, alternative energy, ether theories, and heterodox research not accepted by mainstream science."
-    },
-    {
-      "kind": "tag",
       "name": "game development",
       "description": "Game development topics beyond any specific engine: gameplay programming, game design theory, level design, procedural generation, game AI, and industry practices."
     },
@@ -165,16 +155,6 @@
       "kind": "tag",
       "name": "tax",
       "description": "Tax documents and tax-related material: tax returns, W-2s, 1099s, receipts for deductions, tax planning notes, and correspondence with tax authorities."
-    },
-    {
-      "kind": "tag",
-      "name": "tesla",
-      "description": "Nikola Tesla's inventions and Tesla-inspired engineering: Tesla coils, wireless power transmission, alternating current motors, and modern research building on Tesla's work."
-    },
-    {
-      "kind": "tag",
-      "name": "time travel",
-      "description": "Time travel as a concept: traveling backward or forward through time. Includes causality paradoxes (grandfather paradox, bootstrap paradox), fictional time machines from H.G. Wells or Back to the Future, alternate timelines, branching histories, and speculation on chronological manipulation. Not general relativity or spacetime physics for their own sake."
     }
   ]
 }

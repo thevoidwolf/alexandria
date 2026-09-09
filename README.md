@@ -18,6 +18,11 @@ remote ones) and a browser UI, all against one corpus.
 - **Agent-native** — 19 MCP tools spanning ingest, search, curation, and metadata, identical across the stdio and HTTP transports.
 - **Portable** — one SQLite DB (metadata + FTS + vectors) plus a content-addressed blob store; back it up by copying a directory.
 
+<p align="center">
+  <img src="docs/screenshots/search.png" width="860"
+       alt="Alexandria web UI showing hybrid search results, each hit annotated with its FTS rank, vector rank, and fused RRF score">
+</p>
+
 See [SPEC.md](SPEC.md) for the full design document.
 
 ## How it works
@@ -220,6 +225,8 @@ Alexandria ships with a browser UI that co-hosts on the same ASGI app as
 `mcp-http` — one port, one systemd unit, one auth strategy split between two
 credentials (the MCP bearer token stays; the web password is separate).
 
+![Alexandria landing page: corpus totals, a drag-and-drop upload zone, and a live ingest-activity feed](docs/screenshots/home.png)
+
 ### Enable
 
 The web UI is on by default whenever `alexandria mcp-http` runs. Set a password
@@ -242,6 +249,8 @@ MCP client side — the MCP bearer token and the web password are independent.
 - **`/documents`** — filterable, paginated document browser.
 - **`/documents/{id}`** — full metadata, sources, tags, and a lazy-loaded
   "Show extracted text" panel.
+
+![Document browser: filter by category and tags, with type, size, and ingest time per row](docs/screenshots/documents.png)
 
 ### Config
 
@@ -287,6 +296,8 @@ restarts mid-job, that row is swept to `error`; queued rows resume.
   rename into an existing target merges. Confirmation prompts warn about
   affected doc counts.
 - All destructive operations are permanent — no undo.
+
+![Taxonomy page: categories and tags with document counts and inline rename/delete](docs/screenshots/taxonomy.png)
 
 Same actions are available via MCP for agent-driven curation:
 
@@ -359,6 +370,29 @@ Three cheap layers, always run, in this order:
 
 A duplicate hit updates `last_seen_at`, records the alternate `source_uri`, and
 merges any new tags. Near-duplicate detection (MinHash/simhash) is not implemented.
+
+## Label anchors
+
+Categories and tags can be set by hand at ingest, but Alexandria can also suggest
+them — with no training step. Instead of a trained classifier, you write a short
+prose *description* of what each label means (an **anchor**), and the same
+embedding model that powers search embeds it. A new document's chunks are compared
+against those anchor embeddings and against the labels of its nearest already-
+labelled neighbours; anything clearing a similarity threshold is offered as a
+suggestion. Nothing is auto-applied — the home page and `suggest_metadata_tool`
+surface suggestions for one-click confirmation, and duplicates or labels the user
+gave at ingest are skipped.
+
+Because an anchor is just a sentence, adding or reshaping a label is a text edit,
+not a retrain. [`anchors.starter.json`](anchors.starter.json) ships a starter
+taxonomy (10 categories, 21 tags) to import and iterate on — from the **`/anchors`**
+page or the MCP anchor tools (`list_anchors_tool`, `set_anchor_tool`,
+`import_anchors_tool`, `export_anchors_tool`). Matching thresholds live under
+`[classify]` in `config.toml`, with separate similarity floors for categories and
+tags: every document needs a category, so its bar is lower, while tags are
+optional and held to a stricter one.
+
+![Anchors page: natural-language prototypes for categories and tags, with JSON import/export and an add/update form](docs/screenshots/anchors.png)
 
 ## License
 
