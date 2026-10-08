@@ -3,13 +3,14 @@ from __future__ import annotations
 import sqlite3
 import struct
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, get_args
 
 from alexandria.catalog import display_title
 from alexandria.config import Config
 from alexandria.ingest.embed import embed_texts
 
 SearchMode = Literal["hybrid", "fts", "vec"]
+SEARCH_MODES: tuple[str, ...] = get_args(SearchMode)
 
 # RRF constant. Anserini's default; robust across corpora, no tuning knob.
 RRF_K = 60

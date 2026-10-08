@@ -16,15 +16,20 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from datetime import datetime, timezone
+
 import anyio
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from datetime import datetime, timezone
-
 from alexandria import anchors as _anchors
 from alexandria.catalog import get_catalog, get_document, list_documents
-from alexandria.classify import Suggestion, suggest_metadata, suggest_metadata_bulk
+from alexandria.classify import suggest_metadata, suggest_metadata_bulk
+from alexandria.common import (
+    anchor_payload,
+    search_hit_payload,
+    suggestion_payload,
+)
 from alexandria.config import Config, load as load_config
 from alexandria.curate import (
     delete_category as _delete_category,
@@ -42,19 +47,28 @@ from alexandria.originals import (
     lookup_blob_for,
     mime_for,
 )
-from alexandria.search import format_snippet_markdown, search
+from alexandria.search import search
 
 _cfg: Config | None = None
 _conn = None
 _lock = threading.Lock()
+_init_lock = threading.Lock()
 
 
 def _get():
+    """Lazily load config and open the shared connection, exactly once.
+
+    Tools run on worker threads, so two first calls can race; without the
+    lock each could open its own connection.
+    """
     global _cfg, _conn
-    if _cfg is None:
-        _cfg = load_config()
-    if _conn is None:
-        _conn = connect(_cfg.db_path, _cfg.embeddings.dim)
+    if _conn is not None:
+        return _cfg, _conn
+    with _init_lock:
+        if _cfg is None:
+            _cfg = load_config()
+        if _conn is None:
+            _conn = connect(_cfg.db_path, _cfg.embeddings.dim)
     return _cfg, _conn
 
 
@@ -207,24 +221,7 @@ def search_tool(
             category=category, tags=tags or [],
             limit=limit, mode=mode,  # type: ignore[arg-type]
         )
-    return [
-        {
-            "chunk_id": h.chunk_id,
-            "doc_id": h.doc_id,
-            "score": h.score,
-            "fts_rank": h.fts_rank,
-            "vec_rank": h.vec_rank,
-            "matched_in": list(h.matched_in),
-            "snippet": format_snippet_markdown(h.snippet),
-            "title": h.title,
-            "display_title": h.display_title,
-            "category": h.category,
-            "tags": h.tags,
-            "source_uri": h.source_uri,
-            "content_type": h.content_type,
-        }
-        for h in hits
-    ]
+    return [search_hit_payload(h) for h in hits]
 
 
 @_tool(READ_ONLY)
@@ -295,7 +292,7 @@ def delete_document_tool(doc_id: str) -> dict[str, Any]:
     return {"deleted": True}
 
 
-_LOOPBACK_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 def _resolve_public_base_url(cfg: Config) -> str | None:
@@ -310,7 +307,7 @@ def _resolve_public_base_url(cfg: Config) -> str | None:
     """
     if cfg.network.public_base_url:
         return cfg.network.public_base_url.rstrip("/")
-    if cfg.network.host in _LOOPBACK_HOSTNAMES:
+    if cfg.network.host in _LOOPBACK_HOSTS:
         return f"http://{cfg.network.host}:{cfg.network.port}"
     return None
 
@@ -499,52 +496,7 @@ def suggest_metadata_tool(
             )
             applied = True
 
-    return _suggestion_payload(s, applied)
-
-
-def _suggestion_payload(s: Suggestion, applied: bool | None = None) -> dict[str, Any]:
-    """Serialize a Suggestion for MCP + API responses."""
-    return {
-        "doc_id": s.doc_id,
-        "current": s.current,
-        "suggested_category": s.suggested_category,
-        "suggested_tags": list(s.suggested_tags),
-        "category_confidence": s.category_confidence,
-        "tag_confidences": dict(s.tag_confidences),
-        "category_source": s.category_source,
-        "tag_source": s.tag_source,
-        "anchor_matches": [
-            {
-                "kind": a.kind,
-                "name": a.name,
-                "similarity": a.similarity,
-                "description": a.description,
-            }
-            for a in s.anchor_matches
-        ],
-        "neighbors": [
-            {
-                "doc_id": n.doc_id,
-                "display_title": n.display_title,
-                "similarity": n.similarity,
-                "category": n.category,
-                "tags": list(n.tags),
-            }
-            for n in s.neighbors
-        ],
-        "applied": s.applied if applied is None else applied,
-    }
-
-
-def _anchor_payload(a) -> dict[str, Any]:
-    return {
-        "kind": a.kind,
-        "name": a.name,
-        "description": a.description,
-        "embed_model": a.embed_model,
-        "created_at": a.created_at,
-        "updated_at": a.updated_at,
-    }
+    return suggestion_payload(s, applied)
 
 
 @_tool(READ_ONLY)
@@ -558,7 +510,7 @@ def list_anchors_tool() -> list[dict[str, Any]]:
     """
     _, conn = _get()
     with _lock:
-        return [_anchor_payload(a) for a in _anchors.list_anchors(conn)]
+        return [anchor_payload(a) for a in _anchors.list_anchors(conn)]
 
 
 @_tool(DESTRUCTIVE)
@@ -578,7 +530,7 @@ def set_anchor_tool(kind: str, name: str, description: str) -> dict[str, Any]:
     cfg, conn = _get()
     with _lock:
         a = _anchors.set_anchor(conn, cfg, kind, name, description)
-    return _anchor_payload(a)
+    return anchor_payload(a)
 
 
 @_tool(DESTRUCTIVE)
@@ -651,7 +603,7 @@ def suggest_metadata_bulk_tool(
         )
     return {
         "scanned": r.scanned,
-        "suggestions": [_suggestion_payload(s) for s in r.suggestions],
+        "suggestions": [suggestion_payload(s) for s in r.suggestions],
         "applied": list(r.applied),
     }
 
@@ -662,8 +614,6 @@ def run() -> None:
 
 
 # ---- Streamable HTTP transport (M7) -----------------------------------------
-
-_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 def validate_bind(host: str, auth_token: str | None, no_auth: bool) -> None:
