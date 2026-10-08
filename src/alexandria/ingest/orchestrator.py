@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import struct
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -95,6 +96,37 @@ def _lookup_by_text(conn: sqlite3.Connection, sha: str) -> str | None:
     return row[0] if row else None
 
 
+def _check_raw_dedup(
+    conn: sqlite3.Connection, fetched: Fetched, raw_sha: str, tags: list[str]
+) -> IngestResult | None:
+    """Gates 1 + 2: known source URI, then known raw bytes."""
+    if existing := _lookup_by_source(conn, fetched.source_kind, fetched.source_uri):
+        conn.execute("UPDATE documents SET last_seen_at = ? WHERE id = ?", (_now(), existing))
+        _add_tags(conn, existing, tags)
+        return IngestResult(existing, True, "source", None, "", 0)
+    if existing := _lookup_by_raw(conn, raw_sha):
+        _record_source(conn, existing, fetched.source_kind, fetched.source_uri)
+        _add_tags(conn, existing, tags)
+        return IngestResult(existing, True, "raw", None, "", 0)
+    return None
+
+
+def _check_text_dedup(
+    conn: sqlite3.Connection,
+    fetched: Fetched,
+    text_sha: str,
+    tags: list[str],
+    title: str | None,
+    ctype: str,
+) -> IngestResult | None:
+    """Gate 3: normalized text already known."""
+    if existing := _lookup_by_text(conn, text_sha):
+        _record_source(conn, existing, fetched.source_kind, fetched.source_uri)
+        _add_tags(conn, existing, tags)
+        return IngestResult(existing, True, "text", title, ctype, 0)
+    return None
+
+
 def ingest_fetched(
     fetched: Fetched,
     conn: sqlite3.Connection,
@@ -102,23 +134,24 @@ def ingest_fetched(
     category: str | None = None,
     tags: list[str] | None = None,
     filename_hint: str | None = None,
+    lock: AbstractContextManager = nullcontext(),
 ) -> IngestResult:
+    """Dedup, extract, chunk, embed and store one fetched document.
+
+    ``lock`` guards ``conn``. It is held only around the DB phases, never
+    across extraction or embedding (which can take minutes for a large PDF
+    on the marker backend), so other readers aren't starved by a long
+    ingest. Because the lock is released mid-ingest, every dedup gate is
+    re-checked just before the insert.
+    """
     tags = tags or []
-
-    # Gate 1: source URI already known
-    if existing := _lookup_by_source(conn, fetched.source_kind, fetched.source_uri):
-        conn.execute("UPDATE documents SET last_seen_at = ? WHERE id = ?", (_now(), existing))
-        _add_tags(conn, existing, tags)
-        return IngestResult(existing, True, "source", None, "", 0)
-
-    # Gate 2: raw bytes already known
     raw_sha = sha256_bytes(fetched.data)
-    if existing := _lookup_by_raw(conn, raw_sha):
-        _record_source(conn, existing, fetched.source_kind, fetched.source_uri)
-        _add_tags(conn, existing, tags)
-        return IngestResult(existing, True, "raw", None, "", 0)
 
-    # Extract
+    with lock:
+        if dup := _check_raw_dedup(conn, fetched, raw_sha, tags):
+            return dup
+
+    # Extract (unlocked)
     if filename_hint:
         filename = filename_hint
     elif fetched.source_kind == "file":
@@ -136,69 +169,77 @@ def ingest_fetched(
             )
         raise ValueError(f"No extractable text from {fetched.source_uri}")
 
-    # Gate 3: normalized text already known
     text_sha = sha256_text(ex.text)
-    if existing := _lookup_by_text(conn, text_sha):
-        _record_source(conn, existing, fetched.source_kind, fetched.source_uri)
-        _add_tags(conn, existing, tags)
-        return IngestResult(existing, True, "text", ex.title, ctype, 0)
+    with lock:
+        if dup := _check_text_dedup(conn, fetched, text_sha, tags, ex.title, ctype):
+            return dup
 
-    # Chunk + embed
+    # Chunk + embed (unlocked)
     chunks = chunk_text(ex.text, cfg.chunking.tokens, cfg.chunking.overlap)
     embeddings = embed_texts([c.text for c in chunks], cfg.embeddings)
 
     doc_id = str(ULID())
     now = _now()
 
-    conn.execute("BEGIN")
-    try:
-        conn.execute(
-            """
-            INSERT INTO documents(
-                id, sha256_raw, sha256_text, content_type, title, author,
-                published_at, category, extracted_text, extractor, embed_model,
-                bytes, ingested_at, last_seen_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                doc_id, raw_sha, text_sha, ctype, ex.title, ex.author,
-                ex.published_at, category, ex.text, ex.extractor,
-                cfg.embeddings.model, len(fetched.data), now, now,
-            ),
-        )
-        conn.execute(
-            "INSERT INTO document_sources(doc_id, source_kind, source_uri, seen_at) VALUES (?, ?, ?, ?)",
-            (doc_id, fetched.source_kind, fetched.source_uri, now),
-        )
-        _add_tags(conn, doc_id, tags)
+    with lock:
+        # Another ingest may have stored the same content while we were
+        # extracting/embedding without the lock.
+        if dup := _check_raw_dedup(conn, fetched, raw_sha, tags):
+            return dup
+        if dup := _check_text_dedup(conn, fetched, text_sha, tags, ex.title, ctype):
+            return dup
 
-        conn.execute(
-            "INSERT INTO documents_fts(doc_id, title, extracted_text) VALUES (?, ?, ?)",
-            (doc_id, ex.title or "", ex.text),
-        )
-
-        for c, vec in zip(chunks, embeddings, strict=True):
-            chunk_id = str(ULID())
-            cur = conn.execute(
-                "INSERT INTO chunks(id, doc_id, ord, start_char, end_char, text) VALUES (?, ?, ?, ?, ?, ?)",
-                (chunk_id, doc_id, c.ord, c.start_char, c.end_char, c.text),
-            )
-            rowid = cur.lastrowid
+        conn.execute("BEGIN")
+        try:
             conn.execute(
-                "INSERT INTO chunks_fts(rowid, chunk_id, doc_id, text) VALUES (?, ?, ?, ?)",
-                (rowid, chunk_id, doc_id, c.text),
+                """
+                INSERT INTO documents(
+                    id, sha256_raw, sha256_text, content_type, title, author,
+                    published_at, category, extracted_text, extractor, embed_model,
+                    bytes, ingested_at, last_seen_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    doc_id, raw_sha, text_sha, ctype, ex.title, ex.author,
+                    ex.published_at, category, ex.text, ex.extractor,
+                    cfg.embeddings.model, len(fetched.data), now, now,
+                ),
             )
             conn.execute(
-                "INSERT INTO chunks_vec(chunk_rowid, embedding) VALUES (?, ?)",
-                (rowid, _serialize_vec(vec)),
+                "INSERT INTO document_sources(doc_id, source_kind, source_uri, seen_at) VALUES (?, ?, ?, ?)",
+                (doc_id, fetched.source_kind, fetched.source_uri, now),
+            )
+            _add_tags(conn, doc_id, tags)
+
+            conn.execute(
+                "INSERT INTO documents_fts(doc_id, title, extracted_text) VALUES (?, ?, ?)",
+                (doc_id, ex.title or "", ex.text),
             )
 
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
+            for c, vec in zip(chunks, embeddings, strict=True):
+                chunk_id = str(ULID())
+                cur = conn.execute(
+                    "INSERT INTO chunks(id, doc_id, ord, start_char, end_char, text) VALUES (?, ?, ?, ?, ?, ?)",
+                    (chunk_id, doc_id, c.ord, c.start_char, c.end_char, c.text),
+                )
+                rowid = cur.lastrowid
+                conn.execute(
+                    "INSERT INTO chunks_fts(rowid, chunk_id, doc_id, text) VALUES (?, ?, ?, ?)",
+                    (rowid, chunk_id, doc_id, c.text),
+                )
+                conn.execute(
+                    "INSERT INTO chunks_vec(chunk_rowid, embedding) VALUES (?, ?)",
+                    (rowid, _serialize_vec(vec)),
+                )
 
-    _write_blob(cfg, raw_sha, fetched.data)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+        # Still under the lock so a concurrent delete_document can't unlink
+        # the blob between our COMMIT and this write.
+        _write_blob(cfg, raw_sha, fetched.data)
 
     return IngestResult(
         doc_id=doc_id,
@@ -216,9 +257,10 @@ def ingest_file(
     cfg: Config,
     category: str | None = None,
     tags: list[str] | None = None,
+    lock: AbstractContextManager = nullcontext(),
 ) -> IngestResult:
     fetched = fetch_file(path)
-    return ingest_fetched(fetched, conn, cfg, category=category, tags=tags)
+    return ingest_fetched(fetched, conn, cfg, category=category, tags=tags, lock=lock)
 
 
 def ingest_url(
@@ -227,11 +269,13 @@ def ingest_url(
     cfg: Config,
     category: str | None = None,
     tags: list[str] | None = None,
+    lock: AbstractContextManager = nullcontext(),
 ) -> IngestResult:
     from alexandria.categorize import categorize_url
 
     resolved_category, resolved_tags = categorize_url(url, cfg, category, tags)
     fetched = fetch_url(url, cfg.http)
     return ingest_fetched(
-        fetched, conn, cfg, category=resolved_category, tags=resolved_tags
+        fetched, conn, cfg, category=resolved_category, tags=resolved_tags,
+        lock=lock,
     )

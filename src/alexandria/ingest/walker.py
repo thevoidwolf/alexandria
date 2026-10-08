@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import sqlite3
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -54,11 +55,14 @@ def ingest_folder(
     glob: str | None = None,
     category: str | None = None,
     tags: list[str] | None = None,
+    lock: AbstractContextManager = nullcontext(),
 ) -> WalkResult:
     result = WalkResult()
     for path in _iter_paths(root, recursive=recursive, glob=glob):
         try:
-            r: IngestResult = ingest_file(path, conn, cfg, category=category, tags=tags)
+            r: IngestResult = ingest_file(
+                path, conn, cfg, category=category, tags=tags, lock=lock
+            )
         except Exception as exc:
             result.errors.append((str(path), f"{type(exc).__name__}: {exc}"))
             continue

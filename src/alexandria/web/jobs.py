@@ -1,9 +1,10 @@
 """Background ingest jobs for the web UI.
 
-A single worker thread drains the `jobs` SQLite table FIFO, running each job
-under the same DB lock the MCP tools use. Progress is reported as coarse
-status transitions (queued → running → done|error|cancelled); SSE subscribers
-receive one event per transition.
+A single worker thread drains the `jobs` SQLite table FIFO. Ingest takes the
+same DB lock the MCP tools use, but only around its DB phases, so pages and
+tools stay responsive during a long extraction. Progress is reported as
+coarse status transitions (queued → running → done|error|cancelled); SSE
+subscribers receive one event per transition.
 
 Restart resilience: on `start()`, any `running` row is swept to `error` (the
 process died mid-job); `queued` rows are left alone and picked up.
@@ -319,16 +320,17 @@ class JobQueue:
             source_uri=f"upload:{filename}",
             content_type_hint=content_type_hint,
         )
+        result = ingest_fetched(
+            fetched, self._conn, self._cfg,
+            category=category, tags=tags,
+            filename_hint=filename,
+            lock=self._db_lock,
+        )
+        payload = asdict(result)
         with self._db_lock:
-            result = ingest_fetched(
-                fetched, self._conn, self._cfg,
-                category=category, tags=tags,
-                filename_hint=filename,
-            )
-            payload = asdict(result)
             suggestion = self._maybe_suggest(result, category, tags)
-            if suggestion:
-                payload["suggested_metadata"] = suggestion
+        if suggestion:
+            payload["suggested_metadata"] = suggestion
         try:
             pending_path.unlink()
         except FileNotFoundError:
@@ -336,20 +338,21 @@ class JobQueue:
         return payload
 
     def _process_url(self, job: JobRow) -> dict[str, Any]:
+        result = ingest_url(
+            job.input["url"], self._conn, self._cfg,
+            category=job.input.get("category"),
+            tags=job.input.get("tags") or [],
+            lock=self._db_lock,
+        )
+        payload = asdict(result)
         with self._db_lock:
-            result = ingest_url(
-                job.input["url"], self._conn, self._cfg,
-                category=job.input.get("category"),
-                tags=job.input.get("tags") or [],
-            )
-            payload = asdict(result)
             suggestion = self._maybe_suggest(
                 result,
                 job.input.get("category"),
                 job.input.get("tags") or [],
             )
-            if suggestion:
-                payload["suggested_metadata"] = suggestion
+        if suggestion:
+            payload["suggested_metadata"] = suggestion
         return payload
 
     def _maybe_suggest(

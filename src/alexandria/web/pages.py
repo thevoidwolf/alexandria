@@ -8,6 +8,7 @@ from importlib import metadata as importlib_metadata
 from pathlib import Path
 from urllib.parse import urlencode
 
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
@@ -22,6 +23,7 @@ from alexandria.web.auth import (
     read_password_hash,
     verify_password,
 )
+from alexandria.web.api import run_locked
 from alexandria.web.jobs import JobQueue
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -136,9 +138,8 @@ def build_page_routes(
     cookie_max_age = cfg.web.session_max_age_days * 86400
 
     async def page_index(request: Request) -> Response:
-        with lock:
-            catalog = get_catalog(conn)
-        recent = jobs.list_recent(limit=20) if jobs else []
+        catalog = await run_locked(lock, get_catalog, conn)
+        recent = await run_in_threadpool(jobs.list_recent, limit=20) if jobs else []
         return templates.TemplateResponse(request, "index.html", {
             "authenticated": True,
             "nav": "home",
@@ -157,12 +158,15 @@ def build_page_routes(
         if mode not in ("hybrid", "fts", "vec"):
             mode = "hybrid"
 
-        with lock:
+        def load():
             catalog = get_catalog(conn)
             hits = search(
                 q, conn, cfg,
                 category=category, tags=tags, limit=25, mode=mode,  # type: ignore[arg-type]
             ) if q else []
+            return catalog, hits
+
+        catalog, hits = await run_locked(lock, load)
 
         return templates.TemplateResponse(request, "search.html", {
             "authenticated": True,
@@ -186,13 +190,16 @@ def build_page_routes(
             offset = 0
         limit = 20
 
-        with lock:
+        def load():
             catalog = get_catalog(conn)
             # Over-fetch one row to detect whether a next page exists.
             docs = list_documents(
                 conn, category=category, tags=tags,
                 limit=limit + 1, offset=offset,
             )
+            return catalog, docs
+
+        catalog, docs = await run_locked(lock, load)
         has_next = len(docs) > limit
         docs = docs[:limit]
 
@@ -219,9 +226,12 @@ def build_page_routes(
 
     async def page_document_detail(request: Request) -> Response:
         doc_id = request.path_params["doc_id"]
-        with lock:
+
+        def load():
             doc = get_document(doc_id, conn, include_text=False)
-            catalog = get_catalog(conn) if doc else None
+            return doc, (get_catalog(conn) if doc else None)
+
+        doc, catalog = await run_locked(lock, load)
         if doc is None:
             return templates.TemplateResponse(request, "document.html", {
                 "authenticated": True,
@@ -252,7 +262,10 @@ def build_page_routes(
                 "error": "No web password set. Run `alexandria set-web-password` on the server.",
             }, status_code=503)
 
-        if not password or not verify_password(password, stored):
+        # bcrypt is deliberately slow (~250ms); keep it off the event loop.
+        if not password or not await run_in_threadpool(
+            verify_password, password, stored
+        ):
             return templates.TemplateResponse(request, "login.html", {
                 "authenticated": False,
                 "error": "Invalid password.",
@@ -275,8 +288,7 @@ def build_page_routes(
         return resp
 
     async def page_taxonomy(request: Request) -> Response:
-        with lock:
-            catalog = get_catalog(conn)
+        catalog = await run_locked(lock, get_catalog, conn)
         return templates.TemplateResponse(request, "taxonomy.html", {
             "authenticated": True,
             "nav": "taxonomy",

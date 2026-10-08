@@ -266,9 +266,9 @@
         const row = document.createElement('div');
         row.style.cssText = 'font-size: 12px; display: grid; grid-template-columns: 70px 130px 1fr 60px; gap: 8px; align-items: baseline;';
         row.innerHTML = `
-          <span class="dim">${a.kind}</span>
-          <span>${a.name}</span>
-          <span class="dim" style="font-style: italic;">${a.description}</span>
+          <span class="dim">${escapeHTML(a.kind)}</span>
+          <span>${escapeHTML(a.name)}</span>
+          <span class="dim" style="font-style: italic;">${escapeHTML(a.description)}</span>
           <span class="mono dim">sim ${a.similarity.toFixed(3)}</span>
         `;
         suggestAnchors.appendChild(row);

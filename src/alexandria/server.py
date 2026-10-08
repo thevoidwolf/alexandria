@@ -1,17 +1,22 @@
-"""MCP stdio server exposing the six Alexandria tools.
+"""MCP server (stdio or Streamable HTTP) exposing the Alexandria tools.
 
-Concurrency: FastMCP runs tools on anyio threads, so a single sqlite3 connection
-is opened with `check_same_thread=False` and guarded by a lock. WAL journaling
-lets multiple readers coexist; writes serialize behind the lock. This is
-appropriate for a single-user local server.
+Concurrency: FastMCP calls sync tools directly on the event loop, which on the
+HTTP transport would stall every other request (web UI, SSE, other MCP
+sessions) while a tool waits on the DB lock or embeds a query. Tools are
+therefore registered via ``_tool()``, which runs them on an anyio worker
+thread. A single sqlite3 connection is opened with `check_same_thread=False`
+and guarded by a lock; writes serialize behind it. This is appropriate for a
+single-user local server.
 """
 from __future__ import annotations
 
+import functools
 import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import anyio
 from mcp.server.fastmcp import FastMCP
 
 from datetime import datetime, timezone
@@ -55,7 +60,27 @@ def _get():
 mcp = FastMCP("alexandria")
 
 
-@mcp.tool()
+def _tool():
+    """Like ``@mcp.tool()``, but the tool body runs on a worker thread.
+
+    The decorated name stays the plain sync function so it can still be
+    called directly (tests, other modules); only the copy registered with
+    FastMCP is the async thread-offloading wrapper.
+    """
+    def deco(fn):
+        @functools.wraps(fn)
+        async def runner(*args, **kwargs):
+            return await anyio.to_thread.run_sync(
+                functools.partial(fn, *args, **kwargs)
+            )
+
+        mcp.tool()(runner)
+        return fn
+
+    return deco
+
+
+@_tool()
 def ingest_folder_tool(
     path: str,
     recursive: bool = True,
@@ -76,12 +101,12 @@ def ingest_folder_tool(
         {"ingested": [doc_id...], "duplicates": [doc_id...], "errors": [{path, reason}], "scanned": N}
     """
     cfg, conn = _get()
-    with _lock:
-        result = ingest_folder(
-            Path(path), conn, cfg,
-            recursive=recursive, glob=glob,
-            category=category, tags=tags or [],
-        )
+    result = ingest_folder(
+        Path(path), conn, cfg,
+        recursive=recursive, glob=glob,
+        category=category, tags=tags or [],
+        lock=_lock,
+    )
     return {
         "ingested": result.ingested,
         "duplicates": result.duplicates,
@@ -90,7 +115,7 @@ def ingest_folder_tool(
     }
 
 
-@mcp.tool()
+@_tool()
 def ingest_url_tool(
     url: str,
     category: str | None = None,
@@ -104,8 +129,7 @@ def ingest_url_tool(
         {"doc_id", "was_duplicate", "dedup_gate", "title", "content_type", "n_chunks"}
     """
     cfg, conn = _get()
-    with _lock:
-        r = ingest_url(url, conn, cfg, category=category, tags=tags or [])
+    r = ingest_url(url, conn, cfg, category=category, tags=tags or [], lock=_lock)
     return {
         "doc_id": r.doc_id,
         "was_duplicate": r.was_duplicate,
@@ -116,7 +140,7 @@ def ingest_url_tool(
     }
 
 
-@mcp.tool()
+@_tool()
 def search_tool(
     query: str,
     category: str | None = None,
@@ -176,7 +200,7 @@ def search_tool(
     ]
 
 
-@mcp.tool()
+@_tool()
 def get_document_tool(
     doc_id: str, include_text: bool = False
 ) -> dict[str, Any] | None:
@@ -191,7 +215,7 @@ def get_document_tool(
     return asdict(doc) if doc else None
 
 
-@mcp.tool()
+@_tool()
 def list_documents_tool(
     category: str | None = None,
     tags: list[str] | None = None,
@@ -216,7 +240,7 @@ def list_documents_tool(
     return [asdict(d) for d in docs]
 
 
-@mcp.tool()
+@_tool()
 def get_catalog_tool() -> dict[str, Any]:
     """Return facet counts and totals for the whole corpus.
 
@@ -229,7 +253,7 @@ def get_catalog_tool() -> dict[str, Any]:
     return asdict(summary)
 
 
-@mcp.tool()
+@_tool()
 def delete_document_tool(doc_id: str) -> dict[str, Any]:
     """Permanently delete a document, all its chunks, FTS/vec index rows, and blob.
 
@@ -264,7 +288,7 @@ def _resolve_public_base_url(cfg: Config) -> str | None:
     return None
 
 
-@mcp.tool()
+@_tool()
 def get_original_tool(
     doc_id: str, ttl_seconds: int = 3600
 ) -> dict[str, Any]:
@@ -342,7 +366,7 @@ def get_original_tool(
     }
 
 
-@mcp.tool()
+@_tool()
 def rename_category_tool(old: str, new: str) -> dict[str, Any]:
     """Rename a category globally. If ``new`` already exists, documents merge under it.
 
@@ -354,7 +378,7 @@ def rename_category_tool(old: str, new: str) -> dict[str, Any]:
     return {"affected": n}
 
 
-@mcp.tool()
+@_tool()
 def delete_category_tool(name: str) -> dict[str, Any]:
     """Unset the category on every document that carries it.
 
@@ -366,7 +390,7 @@ def delete_category_tool(name: str) -> dict[str, Any]:
     return {"affected": n}
 
 
-@mcp.tool()
+@_tool()
 def rename_tag_tool(old: str, new: str) -> dict[str, Any]:
     """Rename a tag globally. If any document already has ``new``, it's a no-op for that document (merge).
 
@@ -378,7 +402,7 @@ def rename_tag_tool(old: str, new: str) -> dict[str, Any]:
     return {"affected": n}
 
 
-@mcp.tool()
+@_tool()
 def delete_tag_tool(name: str) -> dict[str, Any]:
     """Remove a tag from every document that carries it.
 
@@ -390,7 +414,7 @@ def delete_tag_tool(name: str) -> dict[str, Any]:
     return {"affected": n}
 
 
-@mcp.tool()
+@_tool()
 def suggest_metadata_tool(
     doc_id: str, apply: bool = False
 ) -> dict[str, Any] | None:
@@ -496,7 +520,7 @@ def _anchor_payload(a) -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@_tool()
 def list_anchors_tool() -> list[dict[str, Any]]:
     """List every user-authored label anchor (categories + tags).
 
@@ -510,7 +534,7 @@ def list_anchors_tool() -> list[dict[str, Any]]:
         return [_anchor_payload(a) for a in _anchors.list_anchors(conn)]
 
 
-@mcp.tool()
+@_tool()
 def set_anchor_tool(kind: str, name: str, description: str) -> dict[str, Any]:
     """Create or update a label anchor.
 
@@ -530,7 +554,7 @@ def set_anchor_tool(kind: str, name: str, description: str) -> dict[str, Any]:
     return _anchor_payload(a)
 
 
-@mcp.tool()
+@_tool()
 def delete_anchor_tool(kind: str, name: str) -> dict[str, Any]:
     """Delete a label anchor by (kind, name). Idempotent."""
     _, conn = _get()
@@ -539,7 +563,7 @@ def delete_anchor_tool(kind: str, name: str) -> dict[str, Any]:
     return {"deleted": ok}
 
 
-@mcp.tool()
+@_tool()
 def import_anchors_tool(anchors: list[dict[str, Any]]) -> dict[str, Any]:
     """Bulk-upsert anchors from a list of {kind, name, description} objects.
 
@@ -551,7 +575,7 @@ def import_anchors_tool(anchors: list[dict[str, Any]]) -> dict[str, Any]:
         return _anchors.import_anchors(conn, cfg, anchors)
 
 
-@mcp.tool()
+@_tool()
 def export_anchors_tool() -> list[dict[str, Any]]:
     """Export every anchor as a portable JSON list — no embeddings, just
     source descriptions. Round-trips through ``import_anchors_tool``."""
@@ -560,7 +584,7 @@ def export_anchors_tool() -> list[dict[str, Any]]:
         return _anchors.export_anchors(conn)
 
 
-@mcp.tool()
+@_tool()
 def suggest_metadata_bulk_tool(
     limit: int = 20,
     offset: int = 0,

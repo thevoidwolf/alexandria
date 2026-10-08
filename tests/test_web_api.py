@@ -132,6 +132,31 @@ def test_files_inline_serves_blob(client, corpus_dir):
     assert r.content == fixture
 
 
+def test_files_html_is_sandboxed(client, cfg, seeded_conn, corpus_dir):
+    # A stored web page is untrusted: it must not run script on our origin.
+    doc_id = ingest_file(corpus_dir / "page.html", seeded_conn, cfg).doc_id
+    r = client.get(f"/files/{doc_id}")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert r.headers["content-security-policy"] == "sandbox"
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
+def test_files_text_is_sandboxed(client):
+    r = client.get(f"/files/{_first_doc_id(client)}")
+    assert r.headers["content-security-policy"] == "sandbox"
+
+
+def test_files_pdf_not_sandboxed(client, cfg, seeded_conn, corpus_dir):
+    # Chromium won't render a PDF under CSP sandbox.
+    doc_id = ingest_file(corpus_dir / "paper.pdf", seeded_conn, cfg).doc_id
+    r = client.get(f"/files/{doc_id}")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/pdf"
+    assert "content-security-policy" not in r.headers
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
 def test_files_download_flag_sets_attachment(client):
     doc_id = _first_doc_id(client)
     r = client.get(f"/files/{doc_id}?download=1")

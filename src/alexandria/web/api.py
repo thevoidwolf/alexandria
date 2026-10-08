@@ -16,6 +16,7 @@ from importlib import metadata as importlib_metadata
 from pathlib import Path
 from urllib.parse import quote
 
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
@@ -61,6 +62,19 @@ def _sanitize_filename(name: str) -> str:
     name = (name or "").replace("\\", "/")
     name = Path(name).name.strip().lstrip(".")
     return name or "unnamed"
+
+
+async def run_locked(lock: threading.Lock, fn, /, *args, **kwargs):
+    """Run ``fn`` under ``lock`` on a worker thread.
+
+    Handlers must not take the DB lock (or run embeddings) on the event loop:
+    while another thread holds it, the whole server would stall.
+    """
+    def call():
+        with lock:
+            return fn(*args, **kwargs)
+
+    return await run_in_threadpool(call)
 
 
 def _sse_format(event: str, data: dict) -> str:
@@ -127,8 +141,7 @@ def build_api_routes(
         )
 
     async def api_catalog(_request: Request) -> JSONResponse:
-        with lock:
-            summary = get_catalog(conn)
+        summary = await run_locked(lock, get_catalog, conn)
         return JSONResponse(asdict(summary))
 
     async def api_search(request: Request) -> JSONResponse:
@@ -151,11 +164,10 @@ def build_api_routes(
             return JSONResponse(
                 {"error": f"invalid mode: {mode!r}"}, status_code=400
             )
-        with lock:
-            hits = search(
-                query, conn, cfg,
-                category=category, tags=tags, limit=limit, mode=mode,  # type: ignore[arg-type]
-            )
+        hits = await run_locked(
+            lock, search, query, conn, cfg,
+            category=category, tags=tags, limit=limit, mode=mode,
+        )
         return JSONResponse(
             [
                 {
@@ -191,11 +203,10 @@ def build_api_routes(
             return JSONResponse(
                 {"error": "limit/offset out of range"}, status_code=400
             )
-        with lock:
-            docs = list_documents(
-                conn, category=category, tags=tags,
-                since=since, limit=limit, offset=offset,
-            )
+        docs = await run_locked(
+            lock, list_documents, conn,
+            category=category, tags=tags, since=since, limit=limit, offset=offset,
+        )
         return JSONResponse([asdict(d) for d in docs])
 
     async def api_get_document(request: Request) -> JSONResponse:
@@ -203,8 +214,9 @@ def build_api_routes(
         include_text = request.query_params.get("include_text", "").lower() in (
             "1", "true", "yes"
         )
-        with lock:
-            doc = get_document(doc_id, conn, include_text=include_text)
+        doc = await run_locked(
+            lock, get_document, doc_id, conn, include_text=include_text
+        )
         if doc is None:
             return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse(asdict(doc))
@@ -266,7 +278,8 @@ def build_api_routes(
                             break
                         out.write(chunk)
                     else:
-                        job_id = jobs.enqueue_upload(
+                        job_id = await run_in_threadpool(
+                            jobs.enqueue_upload,
                             pending_path=pending_path,
                             filename=filename,
                             category=category,
@@ -301,7 +314,7 @@ def build_api_routes(
             tags = _split_tags(tags_field)
         else:
             tags = [str(t).strip() for t in tags_field if str(t).strip()]
-        job_id = jobs.enqueue_url(url, category, tags)
+        job_id = await run_in_threadpool(jobs.enqueue_url, url, category, tags)
         return JSONResponse({"job_id": job_id})
 
     async def api_list_jobs(request: Request) -> JSONResponse:
@@ -312,7 +325,7 @@ def build_api_routes(
         except ValueError:
             return JSONResponse({"error": "invalid limit"}, status_code=400)
         limit = max(1, min(200, limit))
-        rows = jobs.list_recent(limit=limit)
+        rows = await run_in_threadpool(jobs.list_recent, limit=limit)
         return JSONResponse([asdict(r) for r in rows])
 
     async def api_get_job(request: Request) -> JSONResponse:
@@ -320,7 +333,7 @@ def build_api_routes(
             return JSONResponse(
                 {"error": "job queue disabled"}, status_code=503
             )
-        row = jobs.get(request.path_params["job_id"])
+        row = await run_in_threadpool(jobs.get, request.path_params["job_id"])
         if row is None:
             return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse(asdict(row))
@@ -330,7 +343,7 @@ def build_api_routes(
             return JSONResponse(
                 {"error": "job queue disabled"}, status_code=503
             )
-        ok = jobs.cancel(request.path_params["job_id"])
+        ok = await run_in_threadpool(jobs.cancel, request.path_params["job_id"])
         if not ok:
             return JSONResponse(
                 {"error": "not cancellable (unknown, done, or already cancelled)"},
@@ -407,16 +420,17 @@ def build_api_routes(
         if category is ... and tags is None:
             return JSONResponse({"error": "no fields to update"}, status_code=400)
 
-        with lock:
-            ok = update_document_metadata(doc_id, conn, category=category, tags=tags)
+        ok = await run_locked(
+            lock, update_document_metadata, doc_id, conn,
+            category=category, tags=tags,
+        )
         if not ok:
             return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse({"ok": True})
 
     async def api_delete_document(request: Request) -> JSONResponse:
         doc_id = request.path_params["doc_id"]
-        with lock:
-            ok = delete_document(doc_id, conn, cfg)
+        ok = await run_locked(lock, delete_document, doc_id, conn, cfg)
         if not ok:
             return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse({"deleted": True})
@@ -430,14 +444,12 @@ def build_api_routes(
         new = (body.get("to") or "").strip() if isinstance(body, dict) else ""
         if not new:
             return JSONResponse({"error": "'to' is required"}, status_code=400)
-        with lock:
-            n = rename_category(old, new, conn)
+        n = await run_locked(lock, rename_category, old, new, conn)
         return JSONResponse({"affected": n})
 
     async def api_delete_category(request: Request) -> JSONResponse:
         name = request.path_params["name"]
-        with lock:
-            n = delete_category(name, conn)
+        n = await run_locked(lock, delete_category, name, conn)
         return JSONResponse({"affected": n})
 
     async def api_rename_tag(request: Request) -> JSONResponse:
@@ -449,14 +461,12 @@ def build_api_routes(
         new = (body.get("to") or "").strip() if isinstance(body, dict) else ""
         if not new:
             return JSONResponse({"error": "'to' is required"}, status_code=400)
-        with lock:
-            n = rename_tag(old, new, conn)
+        n = await run_locked(lock, rename_tag, old, new, conn)
         return JSONResponse({"affected": n})
 
     async def api_delete_tag(request: Request) -> JSONResponse:
         name = request.path_params["name"]
-        with lock:
-            n = delete_tag(name, conn)
+        n = await run_locked(lock, delete_tag, name, conn)
         return JSONResponse({"affected": n})
 
     # ---- classifier ------------------------------------------------------
@@ -485,24 +495,24 @@ def build_api_routes(
                 "1", "true", "yes"
             )
 
-        with lock:
+        def suggest_and_apply() -> tuple[Suggestion | None, bool]:
             s = suggest_metadata(doc_id, conn, cfg)
-            if s is None:
-                return JSONResponse({"error": "not found"}, status_code=404)
-            applied = False
-            if apply_writes:
-                cat = override_category if override_category is not ... else (
-                    s.suggested_category if s.suggested_category else ...
-                )
-                tags = override_tags if override_tags is not None else (
-                    s.suggested_tags if s.suggested_tags else None
-                )
-                if cat is not ... or tags is not None:
-                    update_document_metadata(
-                        doc_id, conn, category=cat, tags=tags,
-                    )
-                    applied = True
+            if s is None or not apply_writes:
+                return s, False
+            cat = override_category if override_category is not ... else (
+                s.suggested_category if s.suggested_category else ...
+            )
+            tags = override_tags if override_tags is not None else (
+                s.suggested_tags if s.suggested_tags else None
+            )
+            if cat is ... and tags is None:
+                return s, False
+            update_document_metadata(doc_id, conn, category=cat, tags=tags)
+            return s, True
 
+        s, applied = await run_locked(lock, suggest_and_apply)
+        if s is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse(_suggestion_json(s, applied))
 
     # ---- anchors --------------------------------------------------------
@@ -518,8 +528,7 @@ def build_api_routes(
         }
 
     async def api_list_anchors(_request: Request) -> JSONResponse:
-        with lock:
-            items = _anchors.list_anchors(conn)
+        items = await run_locked(lock, _anchors.list_anchors, conn)
         return JSONResponse([_anchor_json(a) for a in items])
 
     async def api_set_anchor(request: Request) -> JSONResponse:
@@ -537,8 +546,9 @@ def build_api_routes(
                 {"error": "description is required"}, status_code=400
             )
         try:
-            with lock:
-                a = _anchors.set_anchor(conn, cfg, kind, name, description)
+            a = await run_locked(
+                lock, _anchors.set_anchor, conn, cfg, kind, name, description
+            )
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return JSONResponse(_anchor_json(a))
@@ -546,8 +556,7 @@ def build_api_routes(
     async def api_delete_anchor(request: Request) -> JSONResponse:
         kind = request.path_params["kind"]
         name = request.path_params["name"]
-        with lock:
-            ok = _anchors.delete_anchor(conn, kind, name)
+        ok = await run_locked(lock, _anchors.delete_anchor, conn, kind, name)
         return JSONResponse({"deleted": ok})
 
     async def api_import_anchors(request: Request) -> JSONResponse:
@@ -561,13 +570,11 @@ def build_api_routes(
                 {"error": "expected {\"anchors\": [...]} or a top-level list"},
                 status_code=400,
             )
-        with lock:
-            r = _anchors.import_anchors(conn, cfg, items)
+        r = await run_locked(lock, _anchors.import_anchors, conn, cfg, items)
         return JSONResponse(r)
 
     async def api_export_anchors(_request: Request) -> JSONResponse:
-        with lock:
-            items = _anchors.export_anchors(conn)
+        items = await run_locked(lock, _anchors.export_anchors, conn)
         return JSONResponse({"anchors": items})
 
     async def api_suggest_metadata_bulk(request: Request) -> JSONResponse:
@@ -587,12 +594,11 @@ def build_api_routes(
         missing_only = bool(body.get("missing_only", True))
         apply_writes = bool(body.get("apply", False))
 
-        with lock:
-            r = suggest_metadata_bulk(
-                conn, cfg,
-                limit=limit, offset=offset,
-                missing_only=missing_only, apply=apply_writes,
-            )
+        r = await run_locked(
+            lock, suggest_metadata_bulk, conn, cfg,
+            limit=limit, offset=offset,
+            missing_only=missing_only, apply=apply_writes,
+        )
         return JSONResponse({
             "scanned": r.scanned,
             "suggestions": [_suggestion_json(s, s.applied) for s in r.suggestions],
@@ -606,8 +612,7 @@ def build_api_routes(
         download = (request.query_params.get("download") or "").lower() in (
             "1", "true", "yes"
         )
-        with lock:
-            info = lookup_blob_for(conn, doc_id)
+        info = await run_locked(lock, lookup_blob_for, conn, doc_id)
         if info is None:
             return JSONResponse({"error": "not found"}, status_code=404)
         sha, ctype, src_uri = info
@@ -636,7 +641,15 @@ def build_api_routes(
                 f"filename*=UTF-8''{_rfc5987(filename)}"
             ),
             "Cache-Control": "private, max-age=0, must-revalidate",
+            "X-Content-Type-Options": "nosniff",
         }
+        # Originals are untrusted content (any fetched web page) served from
+        # the app's own origin. ``sandbox`` gives them an opaque origin so a
+        # stored page's scripts can't ride the session cookie into /api/*.
+        # PDFs are exempt: Chromium refuses to render PDFs in a sandboxed
+        # document, and its viewer doesn't run page script on our origin.
+        if ctype != "pdf":
+            headers["Content-Security-Policy"] = "sandbox"
         return FileResponse(
             path=str(blob),
             media_type=mime_for(ctype),

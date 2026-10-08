@@ -167,6 +167,16 @@
       footer.site { padding: 14px; }
     }
   </style>
+  <script>
+    // Shared by every page script that builds HTML strings. Titles, tags and
+    // anchor text come from ingested documents or imports, so anything
+    // interpolated into innerHTML must go through this.
+    function escapeHTML(s) {
+      return String(s ?? '').replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+      );
+    }
+  </script>
 </head>
 <body>
   {% block header %}
