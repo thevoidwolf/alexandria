@@ -123,7 +123,7 @@
       const lower = tag.toLowerCase();
       if (alreadyUsed.has(lower) && !lower.startsWith(partial)) continue;
       if (partial && !lower.startsWith(partial)) continue;
-      opts.push(`<option value="${prefix}${tag}">`);
+      opts.push(`<option value="${escapeHTML(prefix + tag)}">`);
       if (opts.length >= 20) break;
     }
     tagsList.innerHTML = opts.join('');
@@ -201,7 +201,7 @@
           <span class="dim" style="font-size: 12px;">Suggested</span>
           ${chips.join(' ') || '<span class="dim" style="font-size:12px;">(nothing above threshold)</span>'}
           <span style="flex: 1 1 auto;"></span>
-          <button type="button" data-action="apply" data-doc-id="${escapeAttr(docId)}"
+          <button type="button" data-action="apply" data-doc-id="${escapeHTML(docId)}"
             style="font-size: 12px; padding: 4px 10px;">Apply</button>
           <a href="/documents/${encodeURIComponent(docId)}" class="linklike"
             style="font-size: 12px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 4px; text-decoration: none; color: var(--dim);">Review</a>
@@ -226,14 +226,6 @@
     if (sRow) sRow.remove();
   }
 
-  function escapeHTML(s) {
-    return String(s).replace(/[&<>"']/g, (c) =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
-    );
-  }
-  function escapeAttr(s) {
-    return String(s).replace(/"/g, '&quot;');
-  }
 
   jobsBody.addEventListener('click', async (e) => {
     const btn = e.target.closest('button[data-action="apply"]');

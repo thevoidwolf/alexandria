@@ -58,7 +58,7 @@
     const style = kind === 'primary'
       ? 'class="chip"'
       : 'class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);"';
-    return items.map((t) => `<span ${style}>${t}</span>`).join(' ');
+    return items.map((t) => `<span ${style}>${escapeHTML(t)}</span>`).join(' ');
   };
 
   const renderRow = (s) => {
@@ -69,9 +69,9 @@
     head.style.cssText = 'display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;';
     head.innerHTML = `
       <a href="/documents/${encodeURIComponent(s.doc_id)}" style="font-size: 15px; font-weight: 500;">
-        ${s.current.title || s.doc_id}
+        ${escapeHTML(s.current.title || s.doc_id)}
       </a>
-      <span class="mono dim" style="font-size: 11px;">${s.doc_id}</span>
+      <span class="mono dim" style="font-size: 11px;">${escapeHTML(s.doc_id)}</span>
     `;
     wrap.appendChild(head);
 
@@ -80,14 +80,14 @@
     diff.innerHTML = `
       <div class="dim">Current</div>
       <div>
-        ${s.current.category ? `<span class="chip">${s.current.category}</span>` : '<span class="dim" style="font-size:12px;">no category</span>'}
+        ${s.current.category ? `<span class="chip">${escapeHTML(s.current.category)}</span>` : '<span class="dim" style="font-size:12px;">no category</span>'}
         ${renderChips(s.current.tags, 'secondary')}
       </div>
       <div class="dim">Suggested</div>
       <div>
-        ${s.suggested_category ? `<span class="chip">${s.suggested_category}</span> <span class="mono dim" style="font-size:11px;">${fmtPct(s.category_confidence)}</span>` : '<span class="dim" style="font-size:12px;">no category</span>'}
+        ${s.suggested_category ? `<span class="chip">${escapeHTML(s.suggested_category)}</span> <span class="mono dim" style="font-size:11px;">${fmtPct(s.category_confidence)}</span>` : '<span class="dim" style="font-size:12px;">no category</span>'}
         <br>
-        ${(s.suggested_tags || []).map((t) => `<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">${t} <span class="mono dim" style="font-size:10px;">${fmtPct(s.tag_confidences[t] || 0)}</span></span>`).join(' ') || '<span class="dim" style="font-size:12px;">no tags</span>'}
+        ${(s.suggested_tags || []).map((t) => `<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">${escapeHTML(t)} <span class="mono dim" style="font-size:10px;">${fmtPct(s.tag_confidences[t] || 0)}</span></span>`).join(' ') || '<span class="dim" style="font-size:12px;">no tags</span>'}
       </div>
     `;
     wrap.appendChild(diff);

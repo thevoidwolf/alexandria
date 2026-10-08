@@ -110,8 +110,8 @@
     const head = document.createElement('div');
     head.style.cssText = 'display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;';
     head.innerHTML = `
-      <span style="font-size: 15px; font-weight: 500;">${a.name}</span>
-      <span class="mono dim" style="font-size: 11px;">updated ${a.updated_at}</span>
+      <span style="font-size: 15px; font-weight: 500;">${escapeHTML(a.name)}</span>
+      <span class="mono dim" style="font-size: 11px;">updated ${escapeHTML(a.updated_at)}</span>
     `;
     const spacer = document.createElement('div');
     spacer.style.marginLeft = 'auto';
