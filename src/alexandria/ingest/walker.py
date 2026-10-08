@@ -47,6 +47,10 @@ def _iter_paths(root: Path, recursive: bool, glob: str | None) -> list[Path]:
     return paths
 
 
+def _within(path: Path, roots: tuple[Path, ...]) -> bool:
+    return any(path.is_relative_to(r) for r in roots)
+
+
 def ingest_folder(
     root: Path,
     conn: sqlite3.Connection,
@@ -56,9 +60,26 @@ def ingest_folder(
     category: str | None = None,
     tags: list[str] | None = None,
     lock: AbstractContextManager = nullcontext(),
+    allowed_roots: tuple[Path, ...] | None = None,
 ) -> WalkResult:
+    """Ingest every supported file under ``root``.
+
+    ``allowed_roots`` (None = unrestricted) confines reads to those folders.
+    Both ``root`` and each file are checked after resolving symlinks, so a
+    link inside an allowed folder can't point the walk elsewhere.
+    """
+    if allowed_roots is not None:
+        roots = tuple(r.expanduser().resolve() for r in allowed_roots)
+        if not _within(root.expanduser().resolve(), roots):
+            raise PermissionError(
+                f"{root} is outside [ingest] allowed_roots"
+            )
+
     result = WalkResult()
     for path in _iter_paths(root, recursive=recursive, glob=glob):
+        if allowed_roots is not None and not _within(path.resolve(), roots):
+            result.errors.append((str(path), "resolves outside allowed_roots"))
+            continue
         try:
             r: IngestResult = ingest_file(
                 path, conn, cfg, category=category, tags=tags, lock=lock

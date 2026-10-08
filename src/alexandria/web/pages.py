@@ -19,6 +19,7 @@ from alexandria.config import Config
 from alexandria.search import SNIPPET_MARK_END, SNIPPET_MARK_START, search
 from alexandria.web.auth import (
     COOKIE_NAME,
+    LoginThrottle,
     issue_session,
     read_password_hash,
     verify_password,
@@ -136,6 +137,10 @@ def build_page_routes(
     templates.env.globals["display_title"] = _display_title
 
     cookie_max_age = cfg.web.session_max_age_days * 86400
+    throttle = LoginThrottle()
+    # Behind a TLS-terminating proxy the request itself arrives as http, so
+    # also trust the configured public URL.
+    public_https = (cfg.network.public_base_url or "").lower().startswith("https://")
 
     async def page_index(request: Request) -> Response:
         catalog = await run_locked(lock, get_catalog, conn)
@@ -263,14 +268,24 @@ def build_page_routes(
             }, status_code=503)
 
         # bcrypt is deliberately slow (~250ms); keep it off the event loop.
+        client = request.client.host if request.client else "unknown"
+        wait = throttle.retry_after(client)
+        if wait:
+            return templates.TemplateResponse(request, "login.html", {
+                "authenticated": False,
+                "error": f"Too many failed attempts. Try again in {(wait + 59) // 60} min.",
+            }, status_code=429, headers={"Retry-After": str(wait)})
+
         if not password or not await run_in_threadpool(
             verify_password, password, stored
         ):
+            throttle.record_failure(client)
             return templates.TemplateResponse(request, "login.html", {
                 "authenticated": False,
                 "error": "Invalid password.",
             }, status_code=401)
 
+        throttle.reset(client)
         cookie = issue_session(session_secret, cookie_max_age)
         resp = RedirectResponse(url="/", status_code=303)
         resp.set_cookie(
@@ -278,6 +293,7 @@ def build_page_routes(
             max_age=cookie_max_age,
             httponly=True,
             samesite="strict",
+            secure=public_https or request.url.scheme == "https",
             path="/",
         )
         return resp

@@ -18,6 +18,7 @@ from typing import Any
 
 import anyio
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from datetime import datetime, timezone
 
@@ -60,7 +61,22 @@ def _get():
 mcp = FastMCP("alexandria")
 
 
-def _tool():
+# Hints let MCP clients decide what needs user confirmation. Ingested text is
+# untrusted and flows back to the agent, so anything that can lose data is
+# marked destructive.
+READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+ADDITIVE = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, openWorldHint=False
+)
+FETCHES_WEB = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, openWorldHint=True
+)
+DESTRUCTIVE = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True, openWorldHint=False
+)
+
+
+def _tool(annotations: ToolAnnotations):
     """Like ``@mcp.tool()``, but the tool body runs on a worker thread.
 
     The decorated name stays the plain sync function so it can still be
@@ -74,13 +90,13 @@ def _tool():
                 functools.partial(fn, *args, **kwargs)
             )
 
-        mcp.tool()(runner)
+        mcp.tool(annotations=annotations)(runner)
         return fn
 
     return deco
 
 
-@_tool()
+@_tool(ADDITIVE)
 def ingest_folder_tool(
     path: str,
     recursive: bool = True,
@@ -90,8 +106,11 @@ def ingest_folder_tool(
 ) -> dict[str, Any]:
     """Walk a folder and ingest all supported files (pdf, html, txt, md).
 
+    Only folders under ``[ingest] allowed_roots`` in the server's config.toml
+    may be read; with none configured the tool refuses every path.
+
     Args:
-        path: Absolute or ~-expanded folder path.
+        path: Absolute or ~-expanded folder path on the server.
         recursive: Descend into subdirectories.
         category: Optional category to apply to every new document.
         tags: Optional tags to apply to every new document.
@@ -101,11 +120,17 @@ def ingest_folder_tool(
         {"ingested": [doc_id...], "duplicates": [doc_id...], "errors": [{path, reason}], "scanned": N}
     """
     cfg, conn = _get()
+    if not cfg.ingest.allowed_roots:
+        raise PermissionError(
+            "ingest_folder_tool is disabled: no [ingest] allowed_roots are "
+            "configured in the server's config.toml"
+        )
     result = ingest_folder(
         Path(path), conn, cfg,
         recursive=recursive, glob=glob,
         category=category, tags=tags or [],
         lock=_lock,
+        allowed_roots=tuple(Path(r) for r in cfg.ingest.allowed_roots),
     )
     return {
         "ingested": result.ingested,
@@ -115,7 +140,7 @@ def ingest_folder_tool(
     }
 
 
-@_tool()
+@_tool(FETCHES_WEB)
 def ingest_url_tool(
     url: str,
     category: str | None = None,
@@ -140,7 +165,7 @@ def ingest_url_tool(
     }
 
 
-@_tool()
+@_tool(READ_ONLY)
 def search_tool(
     query: str,
     category: str | None = None,
@@ -200,7 +225,7 @@ def search_tool(
     ]
 
 
-@_tool()
+@_tool(READ_ONLY)
 def get_document_tool(
     doc_id: str, include_text: bool = False
 ) -> dict[str, Any] | None:
@@ -215,7 +240,7 @@ def get_document_tool(
     return asdict(doc) if doc else None
 
 
-@_tool()
+@_tool(READ_ONLY)
 def list_documents_tool(
     category: str | None = None,
     tags: list[str] | None = None,
@@ -240,7 +265,7 @@ def list_documents_tool(
     return [asdict(d) for d in docs]
 
 
-@_tool()
+@_tool(READ_ONLY)
 def get_catalog_tool() -> dict[str, Any]:
     """Return facet counts and totals for the whole corpus.
 
@@ -253,7 +278,7 @@ def get_catalog_tool() -> dict[str, Any]:
     return asdict(summary)
 
 
-@_tool()
+@_tool(DESTRUCTIVE)
 def delete_document_tool(doc_id: str) -> dict[str, Any]:
     """Permanently delete a document, all its chunks, FTS/vec index rows, and blob.
 
@@ -288,7 +313,7 @@ def _resolve_public_base_url(cfg: Config) -> str | None:
     return None
 
 
-@_tool()
+@_tool(READ_ONLY)
 def get_original_tool(
     doc_id: str, ttl_seconds: int = 3600
 ) -> dict[str, Any]:
@@ -366,7 +391,7 @@ def get_original_tool(
     }
 
 
-@_tool()
+@_tool(DESTRUCTIVE)
 def rename_category_tool(old: str, new: str) -> dict[str, Any]:
     """Rename a category globally. If ``new`` already exists, documents merge under it.
 
@@ -378,7 +403,7 @@ def rename_category_tool(old: str, new: str) -> dict[str, Any]:
     return {"affected": n}
 
 
-@_tool()
+@_tool(DESTRUCTIVE)
 def delete_category_tool(name: str) -> dict[str, Any]:
     """Unset the category on every document that carries it.
 
@@ -390,7 +415,7 @@ def delete_category_tool(name: str) -> dict[str, Any]:
     return {"affected": n}
 
 
-@_tool()
+@_tool(DESTRUCTIVE)
 def rename_tag_tool(old: str, new: str) -> dict[str, Any]:
     """Rename a tag globally. If any document already has ``new``, it's a no-op for that document (merge).
 
@@ -402,7 +427,7 @@ def rename_tag_tool(old: str, new: str) -> dict[str, Any]:
     return {"affected": n}
 
 
-@_tool()
+@_tool(DESTRUCTIVE)
 def delete_tag_tool(name: str) -> dict[str, Any]:
     """Remove a tag from every document that carries it.
 
@@ -414,7 +439,7 @@ def delete_tag_tool(name: str) -> dict[str, Any]:
     return {"affected": n}
 
 
-@_tool()
+@_tool(DESTRUCTIVE)
 def suggest_metadata_tool(
     doc_id: str, apply: bool = False
 ) -> dict[str, Any] | None:
@@ -520,7 +545,7 @@ def _anchor_payload(a) -> dict[str, Any]:
     }
 
 
-@_tool()
+@_tool(READ_ONLY)
 def list_anchors_tool() -> list[dict[str, Any]]:
     """List every user-authored label anchor (categories + tags).
 
@@ -534,7 +559,7 @@ def list_anchors_tool() -> list[dict[str, Any]]:
         return [_anchor_payload(a) for a in _anchors.list_anchors(conn)]
 
 
-@_tool()
+@_tool(DESTRUCTIVE)
 def set_anchor_tool(kind: str, name: str, description: str) -> dict[str, Any]:
     """Create or update a label anchor.
 
@@ -554,7 +579,7 @@ def set_anchor_tool(kind: str, name: str, description: str) -> dict[str, Any]:
     return _anchor_payload(a)
 
 
-@_tool()
+@_tool(DESTRUCTIVE)
 def delete_anchor_tool(kind: str, name: str) -> dict[str, Any]:
     """Delete a label anchor by (kind, name). Idempotent."""
     _, conn = _get()
@@ -563,7 +588,7 @@ def delete_anchor_tool(kind: str, name: str) -> dict[str, Any]:
     return {"deleted": ok}
 
 
-@_tool()
+@_tool(DESTRUCTIVE)
 def import_anchors_tool(anchors: list[dict[str, Any]]) -> dict[str, Any]:
     """Bulk-upsert anchors from a list of {kind, name, description} objects.
 
@@ -575,7 +600,7 @@ def import_anchors_tool(anchors: list[dict[str, Any]]) -> dict[str, Any]:
         return _anchors.import_anchors(conn, cfg, anchors)
 
 
-@_tool()
+@_tool(READ_ONLY)
 def export_anchors_tool() -> list[dict[str, Any]]:
     """Export every anchor as a portable JSON list — no embeddings, just
     source descriptions. Round-trips through ``import_anchors_tool``."""
@@ -584,7 +609,7 @@ def export_anchors_tool() -> list[dict[str, Any]]:
         return _anchors.export_anchors(conn)
 
 
-@_tool()
+@_tool(DESTRUCTIVE)
 def suggest_metadata_bulk_tool(
     limit: int = 20,
     offset: int = 0,

@@ -130,6 +130,12 @@ user_agent = "Alexandria/0.1"
 respect_robots_txt = true
 max_redirects = 5
 timeout_seconds = 30
+max_download_mb = 100            # abort URL fetches whose body exceeds this
+
+[ingest]
+# Folders the MCP ingest_folder_tool may read. With none listed the tool
+# refuses every path (the `alexandria ingest-folder` CLI is unaffected).
+allowed_roots = ["~/Documents/papers", "~/Downloads/bills"]
 
 # URL heuristics: applied to ingest-url when the caller doesn't supply a category.
 # host_glob uses fnmatch (so *.example.com matches subdomains).
@@ -155,6 +161,13 @@ suggestions (`suggest_metadata_tool`, `suggest_metadata_bulk_tool`), and label
 anchors (`list_anchors_tool`, `set_anchor_tool`, `delete_anchor_tool`,
 `import_anchors_tool`, `export_anchors_tool`). The tool surface is identical
 across both transports.
+
+`ingest_folder_tool` reads files on the **server**, so it only works on folders
+listed under `[ingest] allowed_roots` in `config.toml` (symlinks are resolved
+before the check). Every tool also carries MCP annotations (`readOnlyHint` /
+`destructiveHint`), so clients can ask before running deletes, renames, or
+bulk metadata writes. That matters because ingested text is untrusted and flows
+back to the agent.
 
 ### Local (stdio)
 
@@ -263,6 +276,12 @@ password_hash_file = ""   # default: $ALEXANDRIA_HOME/web_password_hash
 session_secret_file = ""  # default: $ALEXANDRIA_HOME/session_secret (auto-generated)
 session_max_age_days = 30
 ```
+
+After 10 failed logins within 15 minutes from one address, `/login` returns
+429 until the oldest failure ages out. Behind a reverse proxy every client
+shares the proxy's address, so the limit is effectively global. The session
+cookie gets the `Secure` flag when the request arrives over HTTPS or
+`[network] public_base_url` starts with `https://`.
 
 ### API surface (browser-side, not MCP)
 
