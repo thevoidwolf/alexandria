@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -54,7 +56,30 @@ def _get_capped(
     return resp, bytes(buf)
 
 
-_ROBOTS_CACHE: dict[str, RobotFileParser | None] = {}
+# origin -> (fetched_at, parser or None for "no usable robots.txt"). Bounded
+# and expiring so a long-running server picks up robots.txt changes.
+_ROBOTS_CACHE: dict[str, tuple[float, RobotFileParser | None]] = {}
+_ROBOTS_CACHE_LOCK = threading.Lock()
+_ROBOTS_TTL_SECONDS = 24 * 3600
+_ROBOTS_CACHE_MAX = 512
+
+
+def _robots_cache_get(origin: str) -> tuple[bool, RobotFileParser | None]:
+    """(hit, parser). Expired entries count as misses."""
+    with _ROBOTS_CACHE_LOCK:
+        entry = _ROBOTS_CACHE.get(origin)
+    if entry is None or time.monotonic() - entry[0] > _ROBOTS_TTL_SECONDS:
+        return False, None
+    return True, entry[1]
+
+
+def _robots_cache_put(origin: str, rp: RobotFileParser | None) -> None:
+    with _ROBOTS_CACHE_LOCK:
+        _ROBOTS_CACHE.pop(origin, None)
+        _ROBOTS_CACHE[origin] = (time.monotonic(), rp)
+        while len(_ROBOTS_CACHE) > _ROBOTS_CACHE_MAX:
+            # dicts keep insertion order, so the first key is the oldest.
+            del _ROBOTS_CACHE[next(iter(_ROBOTS_CACHE))]
 
 
 def fetch_file(path: Path) -> Fetched:
@@ -72,23 +97,24 @@ def _robots_parser(url: str, client: httpx.Client) -> RobotFileParser | None:
     """Return a RobotFileParser for the URL's origin, or None if unavailable."""
     parsed = urlparse(url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
-    if origin in _ROBOTS_CACHE:
-        return _ROBOTS_CACHE[origin]
+    hit, cached = _robots_cache_get(origin)
+    if hit:
+        return cached
 
     rp = RobotFileParser()
     robots_url = f"{origin}/robots.txt"
     try:
         resp, body = _get_capped(client, robots_url, _ROBOTS_MAX_BYTES)
     except (httpx.HTTPError, DownloadTooLarge):
-        _ROBOTS_CACHE[origin] = None
+        _robots_cache_put(origin, None)
         return None
 
     if resp.status_code >= 400:
-        _ROBOTS_CACHE[origin] = None
+        _robots_cache_put(origin, None)
         return None
 
     rp.parse(body.decode(resp.encoding or "utf-8", errors="replace").splitlines())
-    _ROBOTS_CACHE[origin] = rp
+    _robots_cache_put(origin, rp)
     return rp
 
 

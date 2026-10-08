@@ -4,7 +4,6 @@ from __future__ import annotations
 import html
 import sqlite3
 import threading
-from importlib import metadata as importlib_metadata
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -15,8 +14,9 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from alexandria.catalog import display_title, get_catalog, get_document, list_documents
+from alexandria.common import package_version, split_tags
 from alexandria.config import Config
-from alexandria.search import SNIPPET_MARK_END, SNIPPET_MARK_START, search
+from alexandria.search import SEARCH_MODES, SNIPPET_MARK_END, SNIPPET_MARK_START, search
 from alexandria.web.auth import (
     COOKIE_NAME,
     LoginThrottle,
@@ -28,13 +28,6 @@ from alexandria.web.api import run_locked
 from alexandria.web.jobs import JobQueue
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
-
-
-def _version() -> str:
-    try:
-        return importlib_metadata.version("alexandria")
-    except importlib_metadata.PackageNotFoundError:
-        return "0.0.0+dev"
 
 
 def _human_bytes(n: int) -> str:
@@ -88,12 +81,6 @@ def _highlight_snippet(s: str) -> str:
     )
 
 
-def _split_tags(raw: str | None) -> list[str]:
-    if not raw:
-        return []
-    return [t.strip() for t in raw.split(",") if t.strip()]
-
-
 def _job_detail(j) -> str:
     if j.status == "error":
         return j.error or ""
@@ -128,7 +115,7 @@ def build_page_routes(
 ) -> list[Route]:
     templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
     templates.env.globals["title"] = cfg.web.title
-    templates.env.globals["version"] = _version()
+    templates.env.globals["version"] = package_version()
     templates.env.globals["home"] = str(cfg.home)
     templates.env.globals["human_bytes"] = _human_bytes
     templates.env.globals["describe_job"] = _describe_job
@@ -158,9 +145,9 @@ def build_page_routes(
         q = (params.get("q") or "").strip()
         category = params.get("category") or None
         tags_raw = params.get("tags") or ""
-        tags = _split_tags(tags_raw)
+        tags = split_tags(tags_raw)
         mode = params.get("mode", "hybrid")
-        if mode not in ("hybrid", "fts", "vec"):
+        if mode not in SEARCH_MODES:
             mode = "hybrid"
 
         def load():
@@ -188,7 +175,7 @@ def build_page_routes(
         params = request.query_params
         category = params.get("category") or None
         tags_raw = params.get("tags") or ""
-        tags = _split_tags(tags_raw)
+        tags = split_tags(tags_raw)
         try:
             offset = max(0, int(params.get("offset", "0")))
         except ValueError:

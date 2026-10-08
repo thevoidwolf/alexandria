@@ -10,23 +10,15 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from alexandria.common import split_tags
 from alexandria.config import load as load_config
 from alexandria.db import connect
 from alexandria.ingest import ingest_file, ingest_folder, ingest_url
 from alexandria.ingest.fetch import RobotsDisallowed
-from alexandria.search import search
+from alexandria.search import SEARCH_MODES, search
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
-
-VALID_MODES = {"hybrid", "fts", "vec"}
-
-
-def _split_tags(raw: str | None) -> list[str]:
-    if not raw:
-        return []
-    return [t.strip() for t in raw.split(",") if t.strip()]
-
 
 def _friendly_errors(fn):
     """Turn expected exceptions into typer.Exit(1) with a red error line."""
@@ -60,7 +52,7 @@ def ingest(
     """Ingest a single file end-to-end."""
     cfg = load_config()
     conn = connect(cfg.db_path, cfg.embeddings.dim)
-    result = ingest_file(path, conn, cfg, category=category, tags=_split_tags(tags))
+    result = ingest_file(path, conn, cfg, category=category, tags=split_tags(tags))
 
     if result.was_duplicate:
         console.print(
@@ -89,7 +81,7 @@ def ingest_folder_cmd(
     result = ingest_folder(
         path, conn, cfg,
         recursive=recursive, glob=glob,
-        category=category, tags=_split_tags(tags),
+        category=category, tags=split_tags(tags),
     )
     console.print(
         f"[green]{len(result.ingested)}[/] new · "
@@ -111,7 +103,7 @@ def ingest_url_cmd(
     """Fetch a URL and ingest its content."""
     cfg = load_config()
     conn = connect(cfg.db_path, cfg.embeddings.dim)
-    result = ingest_url(url, conn, cfg, category=category, tags=_split_tags(tags))
+    result = ingest_url(url, conn, cfg, category=category, tags=split_tags(tags))
 
     if result.was_duplicate:
         console.print(
@@ -174,15 +166,15 @@ def search_cmd(
     mode: str = typer.Option("hybrid", "--mode", "-m", help="hybrid | fts | vec"),
 ) -> None:
     """Search the corpus (hybrid FTS + vector by default)."""
-    if mode not in VALID_MODES:
+    if mode not in SEARCH_MODES:
         raise typer.BadParameter(
-            f"mode must be one of {sorted(VALID_MODES)}, got {mode!r}"
+            f"mode must be one of {sorted(SEARCH_MODES)}, got {mode!r}"
         )
     cfg = load_config()
     conn = connect(cfg.db_path, cfg.embeddings.dim)
     hits = search(
         query, conn, cfg,
-        category=category, tags=_split_tags(tags),
+        category=category, tags=split_tags(tags),
         limit=limit, mode=mode,  # type: ignore[arg-type]
     )
 

@@ -12,7 +12,6 @@ import json
 import sqlite3
 import threading
 from dataclasses import asdict
-from importlib import metadata as importlib_metadata
 from pathlib import Path
 from urllib.parse import quote
 
@@ -25,6 +24,13 @@ from ulid import ULID
 from alexandria import anchors as _anchors
 from alexandria.catalog import get_catalog, get_document, list_documents
 from alexandria.classify import Suggestion, suggest_metadata, suggest_metadata_bulk
+from alexandria.common import (
+    anchor_payload,
+    package_version,
+    search_hit_payload,
+    split_tags,
+    suggestion_payload,
+)
 from alexandria.config import Config
 from alexandria.curate import (
     delete_category,
@@ -40,22 +46,8 @@ from alexandria.originals import (
     lookup_blob_for,
     mime_for,
 )
-from alexandria.search import format_snippet_markdown, search
+from alexandria.search import SEARCH_MODES, search
 from alexandria.web.jobs import JobQueue
-
-_VALID_MODES = {"hybrid", "fts", "vec"}
-
-
-def _split_tags(raw: str) -> list[str]:
-    return [t.strip() for t in raw.split(",") if t.strip()]
-
-
-def _version() -> str:
-    try:
-        return importlib_metadata.version("alexandria")
-    except importlib_metadata.PackageNotFoundError:
-        return "0.0.0+dev"
-
 
 def _sanitize_filename(name: str) -> str:
     """Basename-only, non-empty, no leading dots."""
@@ -86,40 +78,6 @@ def _rfc5987(value: str) -> str:
     return quote(value, safe="")
 
 
-def _suggestion_json(s: Suggestion, applied: bool) -> dict:
-    return {
-        "doc_id": s.doc_id,
-        "current": s.current,
-        "suggested_category": s.suggested_category,
-        "suggested_tags": list(s.suggested_tags),
-        "category_confidence": s.category_confidence,
-        "tag_confidences": dict(s.tag_confidences),
-        "category_source": s.category_source,
-        "tag_source": s.tag_source,
-        "anchor_matches": [
-            {
-                "kind": a.kind,
-                "name": a.name,
-                "similarity": a.similarity,
-                "description": a.description,
-            }
-            for a in s.anchor_matches
-        ],
-        "neighbors": [
-            {
-                "doc_id": n.doc_id,
-                "display_title": n.display_title,
-                "similarity": n.similarity,
-                "category": n.category,
-                "tags": list(n.tags),
-            }
-            for n in s.neighbors
-        ],
-        "applied": applied,
-    }
-
-
-
 def build_api_routes(
     cfg: Config,
     conn: sqlite3.Connection,
@@ -129,7 +87,7 @@ def build_api_routes(
     async def api_info(_request: Request) -> JSONResponse:
         return JSONResponse(
             {
-                "version": _version(),
+                "version": package_version(),
                 "title": cfg.web.title,
                 "home": str(cfg.home),
                 "embed_model": cfg.embeddings.model,
@@ -150,7 +108,7 @@ def build_api_routes(
         if not query:
             return JSONResponse([])
         category = params.get("category") or None
-        tags = _split_tags(params.get("tags") or "")
+        tags = split_tags(params.get("tags"))
         try:
             limit = int(params.get("limit", "10"))
         except ValueError:
@@ -160,7 +118,7 @@ def build_api_routes(
                 {"error": "limit out of range (1..100)"}, status_code=400
             )
         mode = params.get("mode", "hybrid")
-        if mode not in _VALID_MODES:
+        if mode not in SEARCH_MODES:
             return JSONResponse(
                 {"error": f"invalid mode: {mode!r}"}, status_code=400
             )
@@ -168,31 +126,12 @@ def build_api_routes(
             lock, search, query, conn, cfg,
             category=category, tags=tags, limit=limit, mode=mode,
         )
-        return JSONResponse(
-            [
-                {
-                    "chunk_id": h.chunk_id,
-                    "doc_id": h.doc_id,
-                    "score": h.score,
-                    "fts_rank": h.fts_rank,
-                    "vec_rank": h.vec_rank,
-                    "matched_in": list(h.matched_in),
-                    "snippet": format_snippet_markdown(h.snippet),
-                    "title": h.title,
-                    "display_title": h.display_title,
-                    "category": h.category,
-                    "tags": h.tags,
-                    "source_uri": h.source_uri,
-                    "content_type": h.content_type,
-                }
-                for h in hits
-            ]
-        )
+        return JSONResponse([search_hit_payload(h) for h in hits])
 
     async def api_list_documents(request: Request) -> JSONResponse:
         params = request.query_params
         category = params.get("category") or None
-        tags = _split_tags(params.get("tags") or "")
+        tags = split_tags(params.get("tags"))
         since = params.get("since") or None
         try:
             limit = int(params.get("limit", "50"))
@@ -259,7 +198,7 @@ def build_api_routes(
             )
 
         category = (form.get("category") or "").strip() or None
-        tags = _split_tags(form.get("tags") or "")
+        tags = split_tags(form.get("tags"))
 
         job_ids: list[str] = []
         errors: list[dict] = []
@@ -329,7 +268,7 @@ def build_api_routes(
         category = (body.get("category") or "").strip() or None
         tags_field = body.get("tags") or []
         if isinstance(tags_field, str):
-            tags = _split_tags(tags_field)
+            tags = split_tags(tags_field)
         else:
             tags = [str(t).strip() for t in tags_field if str(t).strip()]
         job_id = await run_in_threadpool(jobs.enqueue_url, url, category, tags)
@@ -429,7 +368,7 @@ def build_api_routes(
         if "tags" in body:
             raw_tags = body["tags"]
             if isinstance(raw_tags, str):
-                tags = _split_tags(raw_tags)
+                tags = split_tags(raw_tags)
             elif isinstance(raw_tags, list):
                 tags = [str(t).strip() for t in raw_tags if str(t).strip()]
             else:
@@ -531,23 +470,13 @@ def build_api_routes(
         s, applied = await run_locked(lock, suggest_and_apply)
         if s is None:
             return JSONResponse({"error": "not found"}, status_code=404)
-        return JSONResponse(_suggestion_json(s, applied))
+        return JSONResponse(suggestion_payload(s, applied))
 
     # ---- anchors --------------------------------------------------------
 
-    def _anchor_json(a) -> dict:
-        return {
-            "kind": a.kind,
-            "name": a.name,
-            "description": a.description,
-            "embed_model": a.embed_model,
-            "created_at": a.created_at,
-            "updated_at": a.updated_at,
-        }
-
     async def api_list_anchors(_request: Request) -> JSONResponse:
         items = await run_locked(lock, _anchors.list_anchors, conn)
-        return JSONResponse([_anchor_json(a) for a in items])
+        return JSONResponse([anchor_payload(a) for a in items])
 
     async def api_set_anchor(request: Request) -> JSONResponse:
         kind = request.path_params["kind"]
@@ -569,7 +498,7 @@ def build_api_routes(
             )
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
-        return JSONResponse(_anchor_json(a))
+        return JSONResponse(anchor_payload(a))
 
     async def api_delete_anchor(request: Request) -> JSONResponse:
         kind = request.path_params["kind"]
@@ -619,7 +548,7 @@ def build_api_routes(
         )
         return JSONResponse({
             "scanned": r.scanned,
-            "suggestions": [_suggestion_json(s, s.applied) for s in r.suggestions],
+            "suggestions": [suggestion_payload(s) for s in r.suggestions],
             "applied": list(r.applied),
         })
 
