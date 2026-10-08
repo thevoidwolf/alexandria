@@ -11,6 +11,10 @@ class EmbeddingsConfig:
     model: str = "BAAI/bge-small-en-v1.5"
     device: str = "cpu"
     dim: int = 384
+    # Prepended to search queries only (never to stored chunks). BGE models
+    # retrieve slightly better with "Represent this sentence for searching
+    # relevant passages: "; off by default so existing rankings don't shift.
+    query_instruction: str = ""
 
 
 @dataclass(frozen=True)

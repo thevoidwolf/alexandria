@@ -176,7 +176,9 @@ def search_tool(
     """Search the knowledge store.
 
     Args:
-        query: Free-text query.
+        query: Free-text query. Keyword matching also understands FTS5
+            syntax ("exact phrase", prefix*, OR, NEAR(a b)); text that
+            isn't valid syntax (half-life, C++) is matched as literal words.
         category: Restrict to a single category.
         tags: Restrict to documents carrying all given tags (AND).
         limit: Max hits to return.

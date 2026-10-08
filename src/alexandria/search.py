@@ -49,12 +49,17 @@ def _serialize_vec(vec) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec.tolist())
 
 
-def _eligible_chunk_rowids(
-    conn: sqlite3.Connection,
+def _eligible_rowids_subquery(
     category: str | None,
     tags: list[str] | None,
-) -> list[int] | None:
-    """Return the set of chunk rowids allowed by the filters, or None to mean 'all'."""
+) -> tuple[str, list] | None:
+    """SQL selecting the chunk rowids allowed by the filters, plus its params.
+
+    None means "no filter". Returned as a subquery rather than a
+    materialized list so large categories don't hit SQLite's bound-parameter
+    limit (32766 in default builds). Both FTS5 and sqlite-vec accept it as
+    ``rowid IN (...)``; sqlite-vec applies it before choosing the top k.
+    """
     if not category and not tags:
         return None
 
@@ -79,52 +84,69 @@ def _eligible_chunk_rowids(
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
 
-    rows = conn.execute(sql, params).fetchall()
-    return [r[0] for r in rows]
+    return sql, params
+
+
+def _quote_terms(query: str) -> str | None:
+    """Rewrite free text as an FTS5 expression of literal terms (implicit AND).
+
+    Each whitespace-separated word becomes a quoted string, so punctuation
+    is handed to the tokenizer instead of the query parser: ``half-life``
+    becomes the phrase "half life" rather than a column filter. Words with
+    no letters or digits are dropped. Returns None if nothing is left.
+    """
+    terms = [t for t in query.split() if any(ch.isalnum() for ch in t)]
+    if not terms:
+        return None
+    return " ".join('"' + t.replace('"', '""') + '"' for t in terms)
 
 
 def _fts_search(
     conn: sqlite3.Connection,
     query: str,
-    eligible: list[int] | None,
+    eligible: tuple[str, list] | None,
     limit: int,
 ) -> list[tuple[int, str, str, str]]:
-    """Return [(rowid, chunk_id, doc_id, snippet)] ordered by BM25 rank."""
-    if eligible is not None and not eligible:
-        return []
+    """Return [(rowid, chunk_id, doc_id, snippet)] ordered by BM25 rank.
 
+    The query is first tried as FTS5 syntax, so callers can still use
+    phrases, ``prefix*``, ``OR`` and ``NEAR()``. Ordinary text often isn't
+    valid syntax (``what's``, ``half-life``, ``C++``), so on a syntax error
+    it is retried as quoted literal terms instead of yielding nothing.
+    """
     sql = (
         "SELECT rowid, chunk_id, doc_id, "
         f"snippet(chunks_fts, 2, '{SNIPPET_MARK_START}', '{SNIPPET_MARK_END}', '…', 12) "
         "FROM chunks_fts WHERE chunks_fts MATCH ?"
     )
-    params: list = [query]
-
+    params: list = []
     if eligible is not None:
-        placeholders = ",".join("?" * len(eligible))
-        sql += f" AND rowid IN ({placeholders})"
-        params.extend(eligible)
-
+        sub_sql, sub_params = eligible
+        sql += f" AND rowid IN ({sub_sql})"
+        params.extend(sub_params)
     sql += " ORDER BY rank LIMIT ?"
     params.append(limit)
 
     try:
-        return conn.execute(sql, params).fetchall()
+        return conn.execute(sql, [query, *params]).fetchall()
     except sqlite3.OperationalError:
-        # FTS5 rejects some query strings (e.g. bare punctuation). Treat as no matches.
+        pass
+    quoted = _quote_terms(query)
+    if quoted is None:
+        return []
+    try:
+        return conn.execute(sql, [quoted, *params]).fetchall()
+    except sqlite3.OperationalError:
         return []
 
 
 def _vec_search(
     conn: sqlite3.Connection,
     query_vec_bytes: bytes,
-    eligible: list[int] | None,
+    eligible: tuple[str, list] | None,
     limit: int,
 ) -> list[tuple[int, float]]:
     """Return [(rowid, distance)] from sqlite-vec KNN."""
-    if eligible is not None and not eligible:
-        return []
-
     sql = (
         "SELECT chunk_rowid, distance FROM chunks_vec "
         "WHERE embedding MATCH ? AND k = ?"
@@ -132,9 +154,9 @@ def _vec_search(
     params: list = [query_vec_bytes, limit]
 
     if eligible is not None:
-        placeholders = ",".join("?" * len(eligible))
-        sql += f" AND chunk_rowid IN ({placeholders})"
-        params.extend(eligible)
+        sub_sql, sub_params = eligible
+        sql += f" AND chunk_rowid IN ({sub_sql})"
+        params.extend(sub_params)
 
     return conn.execute(sql, params).fetchall()
 
@@ -201,7 +223,7 @@ def search(
     if not query.strip():
         return []
 
-    eligible = _eligible_chunk_rowids(conn, category, tags)
+    eligible = _eligible_rowids_subquery(category, tags)
     over_fetch = max(limit * 3, 30)
 
     fts_rows = _fts_search(conn, query, eligible, over_fetch) if mode in ("hybrid", "fts") else []
@@ -210,7 +232,9 @@ def search(
 
     vec_ranked: list[int] = []
     if mode in ("hybrid", "vec"):
-        q_vec = embed_texts([query], cfg.embeddings)[0]
+        q_vec = embed_texts(
+            [cfg.embeddings.query_instruction + query], cfg.embeddings
+        )[0]
         vec_rows = _vec_search(conn, _serialize_vec(q_vec), eligible, over_fetch)
         vec_ranked = [r[0] for r in vec_rows]
 

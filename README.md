@@ -113,6 +113,8 @@ to override what you care about.
 [embeddings]
 model = "BAAI/bge-small-en-v1.5"
 device = "cpu"                   # "cpu" | "cuda" | "mps"
+# Optional prefix for search queries only. BGE models suggest:
+# query_instruction = "Represent this sentence for searching relevant passages: "
 
 [chunking]
 tokens = 800
