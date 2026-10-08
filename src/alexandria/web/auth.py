@@ -11,7 +11,9 @@ import hashlib
 import hmac
 import os
 import secrets
+import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import bcrypt
@@ -45,6 +47,60 @@ def read_password_hash(path: Path) -> bytes | None:
     if not path.exists():
         return None
     return path.read_bytes().strip() or None
+
+
+# ---- login throttling -------------------------------------------------------
+
+
+class LoginThrottle:
+    """In-memory limit on failed logins per client key (usually the IP).
+
+    After ``max_failures`` failures inside ``window_seconds`` the key is
+    refused until the oldest failure ages out. Checked *before* bcrypt so a
+    guessing run can't also burn CPU. State resets on restart, which is fine
+    for a single-user server. Behind a reverse proxy every client shares the
+    proxy's address, so the limit becomes global.
+    """
+
+    _MAX_KEYS = 10_000
+
+    def __init__(self, max_failures: int = 10, window_seconds: int = 900) -> None:
+        self.max_failures = max_failures
+        self.window = window_seconds
+        self._failures: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def _prune(self, key: str, now: float) -> deque[float] | None:
+        q = self._failures.get(key)
+        if q is None:
+            return None
+        while q and q[0] <= now - self.window:
+            q.popleft()
+        if not q:
+            del self._failures[key]
+            return None
+        return q
+
+    def retry_after(self, key: str, now: float | None = None) -> int:
+        """Seconds until ``key`` may try again; 0 if allowed now."""
+        now = time.time() if now is None else now
+        with self._lock:
+            q = self._prune(key, now)
+            if q is None or len(q) < self.max_failures:
+                return 0
+            return max(1, int(q[0] + self.window - now) + 1)
+
+    def record_failure(self, key: str, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        with self._lock:
+            if key not in self._failures and len(self._failures) >= self._MAX_KEYS:
+                for k in list(self._failures):
+                    self._prune(k, now)
+            self._failures.setdefault(key, deque()).append(now)
+
+    def reset(self, key: str) -> None:
+        with self._lock:
+            self._failures.pop(key, None)
 
 
 # ---- session secret ---------------------------------------------------------

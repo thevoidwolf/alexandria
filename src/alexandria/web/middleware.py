@@ -17,6 +17,8 @@
 """
 from __future__ import annotations
 
+import hmac
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, RedirectResponse
 
@@ -60,7 +62,12 @@ class SmartAuthMiddleware(BaseHTTPMiddleware):
         hdr = request.headers.get("authorization", "")
         if not hdr.startswith("Bearer "):
             return None
-        return hdr[7:].strip() == self._mcp_token
+        if not self._mcp_token:
+            return False
+        # Constant-time: a plain == leaks how many leading bytes matched.
+        return hmac.compare_digest(
+            hdr[7:].strip().encode("utf-8"), self._mcp_token.encode("utf-8")
+        )
 
     async def _require_bearer(self, request, call_next):
         ok = self._bearer_ok(request)

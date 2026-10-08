@@ -30,6 +30,17 @@ class HttpConfig:
     respect_robots_txt: bool = True
     max_redirects: int = 5
     timeout_seconds: int = 30
+    max_download_mb: int = 100              # abort URL fetches larger than this
+
+
+@dataclass(frozen=True)
+class IngestConfig:
+    # Folders the MCP ``ingest_folder_tool`` may read from. Empty means the
+    # tool refuses every path: an MCP client (possibly remote, possibly an
+    # agent steered by ingested content) shouldn't be able to pull arbitrary
+    # server files such as ~/.ssh into the corpus. The local CLI is not
+    # restricted.
+    allowed_roots: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -130,6 +141,7 @@ class Config:
     network: NetworkConfig = field(default_factory=NetworkConfig)
     web: WebConfig = field(default_factory=WebConfig)
     classify: ClassifyConfig = field(default_factory=ClassifyConfig)
+    ingest: IngestConfig = field(default_factory=IngestConfig)
     category_rules: tuple[CategoryRule, ...] = ()
 
     @property
@@ -197,6 +209,11 @@ def load(home: Path | None = None) -> Config:
 
     classify = ClassifyConfig(**(data.get("classify") or {}))
 
+    ingest_raw = dict(data.get("ingest") or {})
+    if "allowed_roots" in ingest_raw:
+        ingest_raw["allowed_roots"] = tuple(ingest_raw["allowed_roots"] or ())
+    ingest = IngestConfig(**ingest_raw)
+
     rules_raw = data.get("category_rules") or []
     rules = tuple(
         CategoryRule(
@@ -217,5 +234,6 @@ def load(home: Path | None = None) -> Config:
         network=network,
         web=web,
         classify=classify,
+        ingest=ingest,
         category_rules=rules,
     )

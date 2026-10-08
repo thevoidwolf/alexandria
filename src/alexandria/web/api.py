@@ -230,8 +230,21 @@ def build_api_routes(
             )
         max_bytes = cfg.web.max_upload_mb * 1024 * 1024
 
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > max_bytes * 2:
+        # Starlette parses (and spools to disk) the whole multipart body
+        # before the per-file cap below runs, so bound the request up front.
+        # Requiring Content-Length rules out unbounded chunked uploads; the
+        # server stops reading at the declared length.
+        try:
+            content_length = int(request.headers["content-length"])
+        except KeyError:
+            return JSONResponse(
+                {"error": "Content-Length required"}, status_code=411
+            )
+        except ValueError:
+            return JSONResponse(
+                {"error": "invalid Content-Length"}, status_code=400
+            )
+        if content_length > max_bytes * 2:
             # x2 for multipart overhead
             return JSONResponse(
                 {"error": f"request exceeds {cfg.web.max_upload_mb} MB"},
@@ -264,31 +277,36 @@ def build_api_routes(
             pending_path = cfg.pending_uploads_dir / pending_id
 
             total = 0
+            too_big = False
             try:
                 with pending_path.open("wb") as out:
                     while chunk := await upload.read(65536):
                         total += len(chunk)
                         if total > max_bytes:
-                            out.close()
-                            pending_path.unlink(missing_ok=True)
-                            errors.append({
-                                "filename": filename,
-                                "reason": f"exceeds {cfg.web.max_upload_mb} MB cap",
-                            })
+                            too_big = True
                             break
                         out.write(chunk)
-                    else:
-                        job_id = await run_in_threadpool(
-                            jobs.enqueue_upload,
-                            pending_path=pending_path,
-                            filename=filename,
-                            category=category,
-                            tags=tags,
-                            content_type_hint=getattr(upload, "content_type", None),
-                        )
-                        job_ids.append(job_id)
             finally:
                 await upload.close()
+
+            if too_big:
+                pending_path.unlink(missing_ok=True)
+                errors.append({
+                    "filename": filename,
+                    "reason": f"exceeds {cfg.web.max_upload_mb} MB cap",
+                })
+                continue
+            # Enqueue only after the file is closed: the worker may pick the
+            # job up immediately and must see the complete upload.
+            job_id = await run_in_threadpool(
+                jobs.enqueue_upload,
+                pending_path=pending_path,
+                filename=filename,
+                category=category,
+                tags=tags,
+                content_type_hint=getattr(upload, "content_type", None),
+            )
+            job_ids.append(job_id)
 
         return JSONResponse({"job_ids": job_ids, "errors": errors})
 
