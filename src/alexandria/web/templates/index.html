@@ -143,6 +143,7 @@
     if (j.status === 'done' && j.result) {
       if (j.result.was_duplicate) return 'duplicate (' + (j.result.dedup_gate || '?') + ')';
       const bits = [];
+      if (j.result.was_updated) bits.push('updated');
       if (j.result.title) bits.push('"' + j.result.title + '"');
       if (j.result.n_chunks) bits.push(j.result.n_chunks + ' chunks');
       return bits.join(' · ');

@@ -88,6 +88,8 @@ def _job_detail(j) -> str:
         if j.result.get("was_duplicate"):
             return f"duplicate ({j.result.get('dedup_gate') or '?'})"
         bits: list[str] = []
+        if j.result.get("was_updated"):
+            bits.append("updated")
         if j.result.get("title"):
             bits.append(f'"{j.result["title"]}"')
         if j.result.get("n_chunks"):

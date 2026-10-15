@@ -170,6 +170,7 @@ class JobQueue:
         category: str | None,
         tags: list[str],
         content_type_hint: str | None = None,
+        target_doc_id: str | None = None,
     ) -> str:
         return self._insert("upload", {
             "pending_path": str(pending_path),
@@ -177,6 +178,7 @@ class JobQueue:
             "category": category,
             "tags": tags,
             "content_type_hint": content_type_hint,
+            "target_doc_id": target_doc_id,
         })
 
     def enqueue_url(
@@ -325,6 +327,7 @@ class JobQueue:
             category=category, tags=tags,
             filename_hint=filename,
             lock=self._db_lock,
+            target_doc_id=job.input.get("target_doc_id"),
         )
         payload = asdict(result)
         with self._db_lock:
@@ -361,13 +364,15 @@ class JobQueue:
         """After ingest, optionally attach an embedding-neighbor suggestion.
 
         Off unless ``[classify] suggest_on_ingest = true``. Skips
-        duplicates (whose metadata was already resolved on an earlier
+        updates and duplicates (whose metadata was already resolved on an earlier
         ingest), and skips docs where the caller supplied category/tags
         (those are trusted). Called under ``self._db_lock``.
         """
         if not self._cfg.classify.suggest_on_ingest:
             return None
         if getattr(result, "was_duplicate", False):
+            return None
+        if getattr(result, "was_updated", False):
             return None
         if category or tags:
             return None

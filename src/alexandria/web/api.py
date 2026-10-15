@@ -49,7 +49,7 @@ from alexandria.originals import (
 from alexandria.search import SEARCH_MODES, search
 from alexandria.web.jobs import JobQueue
 
-def _sanitize_filename(name: str) -> str:
+def _sanitizefilename(name: str) -> str:
     """Basename-only, non-empty, no leading dots."""
     name = (name or "").replace("\\", "/")
     name = Path(name).name.strip().lstrip(".")
@@ -162,17 +162,15 @@ def build_api_routes(
 
     # ---- job endpoints (require the queue to be present) ----------------
 
-    async def api_upload(request: Request) -> JSONResponse:
-        if jobs is None:
-            return JSONResponse(
-                {"error": "job queue disabled"}, status_code=503
-            )
-        max_bytes = cfg.web.max_upload_mb * 1024 * 1024
+    def check_content_length(request: Request) -> JSONResponse | None:
+        """Bound the request size up front, or return the error response.
 
-        # Starlette parses (and spools to disk) the whole multipart body
-        # before the per-file cap below runs, so bound the request up front.
-        # Requiring Content-Length rules out unbounded chunked uploads; the
-        # server stops reading at the declared length.
+        Starlette parses (and spools to disk) the whole multipart body
+        before any per-file cap runs. Requiring Content-Length rules out
+        unbounded chunked uploads; the server stops reading at the declared
+        length.
+        """
+        max_bytes = cfg.web.max_upload_mb * 1024 * 1024
         try:
             content_length = int(request.headers["content-length"])
         except KeyError:
@@ -189,6 +187,44 @@ def build_api_routes(
                 {"error": f"request exceeds {cfg.web.max_upload_mb} MB"},
                 status_code=413,
             )
+        return None
+
+    async def spool_upload(upload) -> tuple[Path | None, str]:
+        """Copy one uploaded file to the pending dir, enforcing the cap.
+
+        Returns ``(pending_path, filename)``; ``pending_path`` is None when
+        the file exceeded the per-file cap (nothing is left on disk).
+        """
+        max_bytes = cfg.web.max_upload_mb * 1024 * 1024
+        cfg.pending_uploads_dir.mkdir(parents=True, exist_ok=True)
+        filename = _sanitizefilename(getattr(upload, "filename", "") or "")
+        pending_path = cfg.pending_uploads_dir / str(ULID())
+
+        total = 0
+        too_big = False
+        try:
+            with pending_path.open("wb") as out:
+                while chunk := await upload.read(65536):
+                    total += len(chunk)
+                    if total > max_bytes:
+                        too_big = True
+                        break
+                    out.write(chunk)
+        finally:
+            await upload.close()
+
+        if too_big:
+            pending_path.unlink(missing_ok=True)
+            return None, filename
+        return pending_path, filename
+
+    async def api_upload(request: Request) -> JSONResponse:
+        if jobs is None:
+            return JSONResponse(
+                {"error": "job queue disabled"}, status_code=503
+            )
+        if (rejected := check_content_length(request)) is not None:
+            return rejected
 
         form = await request.form()
         uploads = form.getlist("files")
@@ -202,7 +238,6 @@ def build_api_routes(
 
         job_ids: list[str] = []
         errors: list[dict] = []
-        cfg.pending_uploads_dir.mkdir(parents=True, exist_ok=True)
 
         for upload in uploads:
             if not hasattr(upload, "read"):
@@ -211,25 +246,8 @@ def build_api_routes(
                     "reason": "not a file upload",
                 })
                 continue
-            filename = _sanitize_filename(getattr(upload, "filename", "") or "")
-            pending_id = str(ULID())
-            pending_path = cfg.pending_uploads_dir / pending_id
-
-            total = 0
-            too_big = False
-            try:
-                with pending_path.open("wb") as out:
-                    while chunk := await upload.read(65536):
-                        total += len(chunk)
-                        if total > max_bytes:
-                            too_big = True
-                            break
-                        out.write(chunk)
-            finally:
-                await upload.close()
-
-            if too_big:
-                pending_path.unlink(missing_ok=True)
+            pending_path, filename = await spool_upload(upload)
+            if pending_path is None:
                 errors.append({
                     "filename": filename,
                     "reason": f"exceeds {cfg.web.max_upload_mb} MB cap",
@@ -248,6 +266,47 @@ def build_api_routes(
             job_ids.append(job_id)
 
         return JSONResponse({"job_ids": job_ids, "errors": errors})
+
+    async def api_upload_version(request: Request) -> JSONResponse:
+        if jobs is None:
+            return JSONResponse(
+                {"error": "job queue disabled"}, status_code=503
+            )
+        doc_id = request.path_params["doc_id"]
+        exists = await run_locked(
+            lock,
+            lambda: conn.execute(
+                "SELECT 1 FROM documents WHERE id = ?", (doc_id,)
+            ).fetchone(),
+        )
+        if exists is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        if (rejected := check_content_length(request)) is not None:
+            return rejected
+
+        form = await request.form()
+        uploads = form.getlist("file")
+        if len(uploads) != 1 or not hasattr(uploads[0], "read"):
+            return JSONResponse(
+                {"error": "exactly one file required"}, status_code=400
+            )
+        upload = uploads[0]
+        pending_path, filename = await spool_upload(upload)
+        if pending_path is None:
+            return JSONResponse(
+                {"error": f"exceeds {cfg.web.max_upload_mb} MB cap"},
+                status_code=413,
+            )
+        job_id = await run_in_threadpool(
+            jobs.enqueue_upload,
+            pending_path=pending_path,
+            filename=filename,
+            category=None,
+            tags=[],
+            content_type_hint=getattr(upload, "content_type", None),
+            target_doc_id=doc_id,
+        )
+        return JSONResponse({"job_id": job_id})
 
     async def api_ingest_url(request: Request) -> JSONResponse:
         if jobs is None:
@@ -615,6 +674,8 @@ def build_api_routes(
         Route("/api/categories/{name}", api_delete_category, methods=["DELETE"]),
         Route("/api/tags/{name}/rename", api_rename_tag, methods=["POST"]),
         Route("/api/tags/{name}", api_delete_tag, methods=["DELETE"]),
+        Route("/api/documents/{doc_id}/content",
+              api_upload_version, methods=["POST"]),
         Route("/api/upload", api_upload, methods=["POST"]),
         Route("/api/ingest-url", api_ingest_url, methods=["POST"]),
         Route("/api/jobs", api_list_jobs, methods=["GET"]),

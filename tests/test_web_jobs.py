@@ -152,3 +152,21 @@ def test_broadcaster_survives_dead_loop():
     loop.close()
     # Should not raise.
     b.publish({"event": "x", "job": {}})
+
+
+def test_maybe_suggest_skips_updates(queue):
+    from alexandria.ingest.orchestrator import IngestResult
+
+    result = IngestResult("x", False, None, None, "md", 1, was_updated=True)
+    assert queue._maybe_suggest(result, None, []) is None
+
+
+def test_job_detail_shows_updated():
+    from types import SimpleNamespace
+
+    from alexandria.web import pages
+
+    j = SimpleNamespace(status="done", error=None, result={
+        "was_updated": True, "was_duplicate": False, "title": "T", "n_chunks": 3,
+    })
+    assert pages._job_detail(j) == 'updated · "T" · 3 chunks'

@@ -160,3 +160,86 @@ def test_cancel_queued_job(client, jobs):
     assert jobs.get(job_id).status == "cancelled"
     # Second cancel returns 409.
     assert client.post(f"/api/jobs/{job_id}/cancel").status_code == 409
+
+
+# ---- POST /api/documents/{id}/content -------------------------------------
+
+
+def _ingest(corpus_dir: Path, conn, cfg, name: str) -> str:
+    from alexandria.ingest import ingest_file
+
+    return ingest_file(corpus_dir / name, conn, cfg).doc_id
+
+
+def test_upload_new_version_updates_doc(client, jobs, conn, cfg, corpus_dir: Path):
+    a = _ingest(corpus_dir, conn, cfg, "note.md")
+    jobs.start()
+    r = client.post(
+        f"/api/documents/{a}/content",
+        files={"file": ("note-v2.md", b"# New\n\nfresh content\n", "text/markdown")},
+    )
+    assert r.status_code == 200
+    job_id = r.json()["job_id"]
+    assert _wait_status(client, job_id) == "done"
+    result = client.get(f"/api/jobs/{job_id}").json()["result"]
+    assert result["was_updated"] is True
+    assert result["doc_id"] == a
+    text = conn.execute(
+        "SELECT extracted_text FROM documents WHERE id=?", (a,)
+    ).fetchone()[0]
+    assert "fresh content" in text
+    sources = conn.execute(
+        "SELECT source_kind, source_uri FROM document_sources WHERE doc_id=?", (a,)
+    ).fetchall()
+    assert [tuple(s) for s in sources] == [("upload", "upload:note-v2.md")]
+
+
+def test_upload_new_version_unknown_doc_404(client, jobs):
+    r = client.post(
+        "/api/documents/nope/content",
+        files={"file": ("x.md", b"# X\n", "text/markdown")},
+    )
+    assert r.status_code == 404
+    assert r.json() == {"error": "not found"}
+
+
+def test_upload_new_version_requires_exactly_one_file(
+    client, jobs, conn, cfg, corpus_dir: Path
+):
+    a = _ingest(corpus_dir, conn, cfg, "note.md")
+    r = client.post(f"/api/documents/{a}/content", data={"x": "y"})
+    assert r.status_code == 400
+    assert r.json() == {"error": "exactly one file required"}
+    r = client.post(
+        f"/api/documents/{a}/content",
+        files=[
+            ("file", ("a.md", b"# A\n", "text/markdown")),
+            ("file", ("b.md", b"# B\n", "text/markdown")),
+        ],
+    )
+    assert r.status_code == 400
+
+
+def test_upload_new_version_conflict_fails_job(
+    client, jobs, conn, cfg, corpus_dir: Path
+):
+    a = _ingest(corpus_dir, conn, cfg, "note.md")
+    b = _ingest(corpus_dir, conn, cfg, "plain.txt")
+    before = conn.execute(
+        "SELECT sha256_raw FROM documents WHERE id=?", (a,)
+    ).fetchone()[0]
+    jobs.start()
+    r = client.post(
+        f"/api/documents/{a}/content",
+        files={"file": ("plain.txt", (corpus_dir / "plain.txt").read_bytes(), "text/plain")},
+    )
+    assert r.status_code == 200
+    job_id = r.json()["job_id"]
+    assert _wait_status(client, job_id) == "error"
+    error = client.get(f"/api/jobs/{job_id}").json()["error"]
+    assert b in error
+    assert "ContentConflict" in error
+    after = conn.execute(
+        "SELECT sha256_raw FROM documents WHERE id=?", (a,)
+    ).fetchone()[0]
+    assert after == before
