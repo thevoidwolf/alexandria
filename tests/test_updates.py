@@ -214,6 +214,10 @@ def test_edit_into_copy_of_other_doc_moves_source(cfg, conn, tmp_path, fake_embe
 
 
 EDITED_COPY = "# A\n\na new derived note\n"
+# Same length as EDITED_COPY, so the primary-file check gets past the size
+# comparison and has to compare hashes.
+REVISED_ORIGINAL = "# A\n\nthe note, revised.\n"
+assert len(REVISED_ORIGINAL) == len(EDITED_COPY)
 
 
 def _curated_original_with_copy(cfg, conn, tmp_path):
@@ -312,6 +316,92 @@ def test_copy_edited_after_collision_does_not_steal_identity(
     assert r.doc_id != rb.doc_id
     assert _sources(conn, rb.doc_id) == [str(b)]
     assert _doc(conn, rb.doc_id)[1] == b_text
+
+
+def _primary(conn, doc_id: str) -> str:
+    return conn.execute(
+        "SELECT source_uri FROM document_sources WHERE doc_id = ? "
+        "ORDER BY rowid LIMIT 1",
+        (doc_id,),
+    ).fetchone()[0]
+
+
+@pytest.mark.parametrize("copy_first", [True, False])
+def test_same_edit_to_copy_and_original_keeps_curated_doc(
+    copy_first, cfg, conn, tmp_path, fake_embed
+):
+    """Mirrored folders: both files get the same edit. Whichever the sweep
+    reaches first, the doc follows the edit and the original stays primary
+    (the copy isn't split off only for the original to follow it)."""
+    a, b, bid = _curated_original_with_copy(cfg, conn, tmp_path)
+
+    _write(a, EDITED_COPY)
+    _write(b, EDITED_COPY)
+    first, second = (a, b) if copy_first else (b, a)
+    r1 = ingest_file(first, conn, cfg)
+    r2 = ingest_file(second, conn, cfg)
+
+    assert (r1.doc_id, r1.was_updated) == (bid, True)
+    assert (r2.doc_id, r2.was_duplicate) == (bid, True)
+    assert _count(conn, "SELECT COUNT(*) FROM documents") == 1
+    assert _sources(conn, bid) == sorted([str(a), str(b)])
+    assert _primary(conn, bid) == str(b)
+    assert "derived note" in _doc(conn, bid)[1]
+    assert _doc(conn, bid)[2] == "projects"
+    assert _tags(conn, bid) == ["important"]
+
+
+def test_original_stays_primary_after_same_edit(cfg, conn, tmp_path, fake_embed):
+    """After a copy-first identical edit, a later edit to the original alone
+    still updates the curated doc; the copy splits off."""
+    a, b, bid = _curated_original_with_copy(cfg, conn, tmp_path)
+    _write(a, EDITED_COPY)
+    _write(b, EDITED_COPY)
+    ingest_file(a, conn, cfg)
+    ingest_file(b, conn, cfg)
+
+    _write(b, REVISED_ORIGINAL)
+    rb = ingest_file(b, conn, cfg)
+    ra = ingest_file(a, conn, cfg)
+
+    assert (rb.doc_id, rb.was_updated) == (bid, True)
+    assert "revised" in _doc(conn, bid)[1]
+    assert _tags(conn, bid) == ["important"]
+    assert ra.doc_id != bid
+    assert _sources(conn, bid) == [str(b)]
+
+
+def test_unreadable_primary_splits_the_copy(cfg, conn, tmp_path, fake_embed):
+    """A primary path that exists but isn't a regular file can't be compared:
+    the edited copy splits off rather than taking over."""
+    a, b, bid = _curated_original_with_copy(cfg, conn, tmp_path)
+    b.unlink()
+    b.mkdir()
+
+    _write(a, EDITED_COPY)
+    r = ingest_file(a, conn, cfg)
+
+    assert r.doc_id != bid
+    assert _sources(conn, bid) == [str(b)]
+    assert _tags(conn, bid) == ["important"]
+
+
+def test_different_edits_copy_first_original_keeps_identity(
+    cfg, conn, tmp_path, fake_embed
+):
+    a, b, bid = _curated_original_with_copy(cfg, conn, tmp_path)
+
+    _write(a, EDITED_COPY)
+    _write(b, REVISED_ORIGINAL)
+    ra = ingest_file(a, conn, cfg)
+    rb = ingest_file(b, conn, cfg)
+
+    assert ra.doc_id != bid
+    assert (rb.doc_id, rb.was_updated) == (bid, True)
+    assert _sources(conn, bid) == [str(b)]
+    assert "revised" in _doc(conn, bid)[1]
+    assert _tags(conn, bid) == ["important"]
+    assert _sources(conn, ra.doc_id) == [str(a)]
 
 
 def test_failed_extract_leaves_doc_untouched(cfg, conn, tmp_path, fake_embed):
