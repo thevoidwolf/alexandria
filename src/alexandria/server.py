@@ -206,16 +206,19 @@ def store_document_tool(
     Without doc_id this never overwrites anything: it creates a new document
     (or returns the existing one if identical content is already stored, with
     "was_duplicate" true), even if the filename was used before.
-    With doc_id it replaces that document's content, keeping its ID and tags
-    ("was_updated" true); an unknown doc_id is an error.
+    With doc_id it replaces that document's content, keeping its ID, tags
+    and (unless category is given) category ("was_updated" true); an
+    unknown doc_id is an error.
 
     Args:
         content: The full document text.
         filename: Name used for display and format detection; must end in
             .md, .markdown, .txt, .html or .htm.
-        category: Optional category for a new document.
-        tags: Optional tags for a new document.
-        doc_id: ID of an existing document to replace.
+        category: Optional category: set on a new document, or with doc_id
+            replacing that document's category. A duplicate keeps its own.
+        tags: Optional tags, merged into the document's existing tags.
+        doc_id: ID of an existing document to replace; omit it (or pass
+            "") to store new content.
 
     Returns:
         {"doc_id", "was_duplicate", "was_updated", "dedup_gate", "title", "content_type", "n_chunks"}
@@ -234,7 +237,8 @@ def store_document_tool(
         Fetched(data, "mcp", f"mcp:{name}"),
         conn, cfg,
         category=category, tags=tags or [],
-        filename_hint=name, lock=_lock, target_doc_id=doc_id,
+        # Some MCP clients send "" for an omitted optional argument.
+        filename_hint=name, lock=_lock, target_doc_id=doc_id or None,
     )
     return _ingest_payload(r)
 

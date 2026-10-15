@@ -84,6 +84,14 @@ def test_store_unknown_doc_id_refused(cfg, use_cfg, fake_embed):
         srv.store_document_tool("hello world", "n.txt", doc_id="nope")
 
 
+def test_store_empty_doc_id_treated_as_none(cfg, conn, use_cfg, fake_embed):
+    """Some MCP clients send "" for an omitted optional argument."""
+    use_cfg(cfg)
+    r = srv.store_document_tool("# T\n\nbody", "note.md", doc_id="")
+    assert not r["was_duplicate"] and not r["was_updated"]
+    assert _sources(conn, r["doc_id"]) == [("mcp", "mcp:note.md")]
+
+
 def test_folder_tool_reports_updated(cfg, use_cfg, corpus_dir, fake_embed):
     use_cfg(dataclasses.replace(
         cfg, ingest=IngestConfig(allowed_roots=(str(corpus_dir),))
