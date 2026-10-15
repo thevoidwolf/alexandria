@@ -40,11 +40,17 @@ def insert_chunks(
 
 def delete_chunks(conn: sqlite3.Connection, doc_id: str) -> None:
     """Delete a document's chunk, FTS and vector rows."""
-    # sqlite-vec has no doc_id column; scope via chunks.rowid (so delete first).
+    # Scope the index tables via chunks.rowid (so delete chunks last):
+    # sqlite-vec has no doc_id column, and chunks_fts.doc_id is UNINDEXED,
+    # so filtering on it would scan every chunk in the store.
     conn.execute(
         "DELETE FROM chunks_vec WHERE chunk_rowid IN "
         "(SELECT rowid FROM chunks WHERE doc_id = ?)",
         (doc_id,),
     )
-    conn.execute("DELETE FROM chunks_fts WHERE doc_id = ?", (doc_id,))
+    conn.execute(
+        "DELETE FROM chunks_fts WHERE rowid IN "
+        "(SELECT rowid FROM chunks WHERE doc_id = ?)",
+        (doc_id,),
+    )
     conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
