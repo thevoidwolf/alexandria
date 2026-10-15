@@ -285,6 +285,7 @@ def test_every_tool_is_annotated():
     "delete_document_tool", "delete_category_tool", "delete_tag_tool",
     "rename_category_tool", "rename_tag_tool", "suggest_metadata_bulk_tool",
     "import_anchors_tool", "delete_anchor_tool",
+    "store_document_tool", "ingest_folder_tool", "ingest_url_tool",
 ])
 def test_destructive_tools_marked(name):
     a = srv.mcp._tool_manager.get_tool(name).annotations

@@ -40,7 +40,9 @@ from alexandria.curate import (
     update_document_metadata as _update_document_metadata,
 )
 from alexandria.db import connect
-from alexandria.ingest import ingest_folder, ingest_url
+from alexandria.ingest import IngestResult, ingest_folder, ingest_url
+from alexandria.ingest.fetch import Fetched
+from alexandria.ingest.orchestrator import ingest_fetched
 from alexandria.originals import (
     blob_path,
     filename_from_source,
@@ -79,11 +81,8 @@ mcp = FastMCP("alexandria")
 # untrusted and flows back to the agent, so anything that can lose data is
 # marked destructive.
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
-ADDITIVE = ToolAnnotations(
-    readOnlyHint=False, destructiveHint=False, openWorldHint=False
-)
-FETCHES_WEB = ToolAnnotations(
-    readOnlyHint=False, destructiveHint=False, openWorldHint=True
+FETCHES_WEB_DESTRUCTIVE = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True, openWorldHint=True
 )
 DESTRUCTIVE = ToolAnnotations(
     readOnlyHint=False, destructiveHint=True, openWorldHint=False
@@ -110,7 +109,7 @@ def _tool(annotations: ToolAnnotations):
     return deco
 
 
-@_tool(ADDITIVE)
+@_tool(DESTRUCTIVE)
 def ingest_folder_tool(
     path: str,
     recursive: bool = True,
@@ -119,6 +118,10 @@ def ingest_folder_tool(
     glob: str | None = None,
 ) -> dict[str, Any]:
     """Walk a folder and ingest all supported files (pdf, html, txt, md).
+
+    A file already ingested from the same path whose content has changed
+    updates its existing document in place (same ID, tags kept) and is
+    reported under "updated".
 
     Only folders under ``[ingest] allowed_roots`` in the server's config.toml
     may be read; with none configured the tool refuses every path.
@@ -131,7 +134,7 @@ def ingest_folder_tool(
         glob: Optional filename glob (e.g. "*.pdf"). Overrides the default extension filter.
 
     Returns:
-        {"ingested": [doc_id...], "duplicates": [doc_id...], "errors": [{path, reason}], "scanned": N}
+        {"ingested": [doc_id...], "updated": [doc_id...], "duplicates": [doc_id...], "errors": [{path, reason}], "scanned": N}
     """
     cfg, conn = _get()
     if not cfg.ingest.allowed_roots:
@@ -148,13 +151,26 @@ def ingest_folder_tool(
     )
     return {
         "ingested": result.ingested,
+        "updated": result.updated,
         "duplicates": result.duplicates,
         "errors": [{"path": p, "reason": r} for p, r in result.errors],
         "scanned": result.scanned,
     }
 
 
-@_tool(FETCHES_WEB)
+def _ingest_payload(r: IngestResult) -> dict[str, Any]:
+    return {
+        "doc_id": r.doc_id,
+        "was_duplicate": r.was_duplicate,
+        "was_updated": r.was_updated,
+        "dedup_gate": r.dedup_gate,
+        "title": r.title,
+        "content_type": r.content_type,
+        "n_chunks": r.n_chunks,
+    }
+
+
+@_tool(FETCHES_WEB_DESTRUCTIVE)
 def ingest_url_tool(
     url: str,
     category: str | None = None,
@@ -162,21 +178,65 @@ def ingest_url_tool(
 ) -> dict[str, Any]:
     """Fetch a URL and ingest its content (HTML, PDF, text, or markdown).
 
+    If this URL was ingested before and its content has changed, the existing
+    document is updated in place (same ID, tags kept) and "was_updated" is true.
     If category is omitted, URL-based heuristics from config.toml may supply one.
 
     Returns:
-        {"doc_id", "was_duplicate", "dedup_gate", "title", "content_type", "n_chunks"}
+        {"doc_id", "was_duplicate", "was_updated", "dedup_gate", "title", "content_type", "n_chunks"}
     """
     cfg, conn = _get()
     r = ingest_url(url, conn, cfg, category=category, tags=tags or [], lock=_lock)
-    return {
-        "doc_id": r.doc_id,
-        "was_duplicate": r.was_duplicate,
-        "dedup_gate": r.dedup_gate,
-        "title": r.title,
-        "content_type": r.content_type,
-        "n_chunks": r.n_chunks,
-    }
+    return _ingest_payload(r)
+
+
+_STORE_EXTENSIONS = (".htm", ".html", ".markdown", ".md", ".txt")
+
+
+@_tool(DESTRUCTIVE)
+def store_document_tool(
+    content: str,
+    filename: str,
+    category: str | None = None,
+    tags: list[str] | None = None,
+    doc_id: str | None = None,
+) -> dict[str, Any]:
+    """Store markdown, text or HTML content directly as a document.
+
+    Without doc_id this never overwrites anything: it creates a new document
+    (or returns the existing one if identical content is already stored, with
+    "was_duplicate" true), even if the filename was used before.
+    With doc_id it replaces that document's content, keeping its ID and tags
+    ("was_updated" true); an unknown doc_id is an error.
+
+    Args:
+        content: The full document text.
+        filename: Name used for display and format detection; must end in
+            .md, .markdown, .txt, .html or .htm.
+        category: Optional category for a new document.
+        tags: Optional tags for a new document.
+        doc_id: ID of an existing document to replace.
+
+    Returns:
+        {"doc_id", "was_duplicate", "was_updated", "dedup_gate", "title", "content_type", "n_chunks"}
+    """
+    cfg, conn = _get()
+    name = filename.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not name.lower().endswith(_STORE_EXTENSIONS):
+        raise ValueError(
+            f"filename must end in one of: {', '.join(_STORE_EXTENSIONS)} "
+            f"(got {filename!r})"
+        )
+    data = content.encode("utf-8")
+    if len(data) > cfg.web.max_upload_mb * 1024 * 1024:
+        raise ValueError(f"content exceeds {cfg.web.max_upload_mb} MB cap")
+    r = ingest_fetched(
+        Fetched(data, "mcp", f"mcp:{name}"),
+        conn, cfg,
+        category=category, tags=tags or [],
+        filename_hint=name, lock=_lock, target_doc_id=doc_id,
+    )
+    return _ingest_payload(r)
 
 
 @_tool(READ_ONLY)
