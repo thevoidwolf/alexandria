@@ -49,7 +49,7 @@ from alexandria.originals import (
 from alexandria.search import SEARCH_MODES, search
 from alexandria.web.jobs import JobQueue
 
-def _sanitizefilename(name: str) -> str:
+def _sanitize_filename(name: str) -> str:
     """Basename-only, non-empty, no leading dots."""
     name = (name or "").replace("\\", "/")
     name = Path(name).name.strip().lstrip(".")
@@ -197,7 +197,7 @@ def build_api_routes(
         """
         max_bytes = cfg.web.max_upload_mb * 1024 * 1024
         cfg.pending_uploads_dir.mkdir(parents=True, exist_ok=True)
-        filename = _sanitizefilename(getattr(upload, "filename", "") or "")
+        filename = _sanitize_filename(getattr(upload, "filename", "") or "")
         pending_path = cfg.pending_uploads_dir / str(ULID())
 
         total = 0
@@ -291,6 +291,8 @@ def build_api_routes(
                 {"error": "exactly one file required"}, status_code=400
             )
         upload = uploads[0]
+        category = (form.get("category") or "").strip() or None
+        tags = split_tags(form.get("tags"))
         pending_path, filename = await spool_upload(upload)
         if pending_path is None:
             return JSONResponse(
@@ -301,8 +303,8 @@ def build_api_routes(
             jobs.enqueue_upload,
             pending_path=pending_path,
             filename=filename,
-            category=None,
-            tags=[],
+            category=category,
+            tags=tags,
             content_type_hint=getattr(upload, "content_type", None),
             target_doc_id=doc_id,
         )

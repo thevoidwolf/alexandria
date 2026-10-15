@@ -154,9 +154,21 @@ def test_broadcaster_survives_dead_loop():
     b.publish({"event": "x", "job": {}})
 
 
-def test_maybe_suggest_skips_updates(queue):
+def test_maybe_suggest_skips_updates(queue, monkeypatch):
+    import dataclasses
+
+    from alexandria import classify
     from alexandria.ingest.orchestrator import IngestResult
 
+    queue._cfg = dataclasses.replace(
+        queue._cfg,
+        classify=dataclasses.replace(queue._cfg.classify, suggest_on_ingest=True),
+    )
+
+    def boom(*_a, **_k):
+        raise AssertionError("suggest_metadata must not run for updates")
+
+    monkeypatch.setattr(classify, "suggest_metadata", boom)
     result = IngestResult("x", False, None, None, "md", 1, was_updated=True)
     assert queue._maybe_suggest(result, None, []) is None
 

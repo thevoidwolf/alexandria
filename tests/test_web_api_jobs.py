@@ -243,3 +243,24 @@ def test_upload_new_version_conflict_fails_job(
         "SELECT sha256_raw FROM documents WHERE id=?", (a,)
     ).fetchone()[0]
     assert after == before
+
+
+def test_upload_new_version_applies_category_and_merges_tags(
+    client, jobs, conn, cfg, corpus_dir: Path
+):
+    from alexandria.ingest import ingest_file
+
+    a = ingest_file(
+        corpus_dir / "note.md", conn, cfg, category="notes", tags=["x"]
+    ).doc_id
+    jobs.start()
+    r = client.post(
+        f"/api/documents/{a}/content",
+        files={"file": ("note-v2.md", b"# New\n\nfresh content\n", "text/markdown")},
+        data={"category": "archive", "tags": "y"},
+    )
+    assert r.status_code == 200
+    assert _wait_status(client, r.json()["job_id"]) == "done"
+    doc = client.get(f"/api/documents/{a}").json()
+    assert doc["category"] == "archive"
+    assert sorted(doc["tags"]) == ["x", "y"]
