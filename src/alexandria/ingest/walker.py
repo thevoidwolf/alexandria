@@ -16,12 +16,13 @@ SUPPORTED_EXTS = {".pdf", ".html", ".htm", ".txt", ".md", ".markdown"}
 @dataclass
 class WalkResult:
     ingested: list[str] = field(default_factory=list)   # doc_ids of new inserts
+    updated: list[str] = field(default_factory=list)    # doc_ids updated in place
     duplicates: list[str] = field(default_factory=list) # doc_ids that hit a dedup gate
     errors: list[tuple[str, str]] = field(default_factory=list)  # (path, reason)
 
     @property
     def scanned(self) -> int:
-        return len(self.ingested) + len(self.duplicates) + len(self.errors)
+        return len(self.ingested) + len(self.updated) + len(self.duplicates) + len(self.errors)
 
 
 def _iter_paths(root: Path, recursive: bool, glob: str | None) -> list[Path]:
@@ -89,6 +90,8 @@ def ingest_folder(
             continue
         if r.was_duplicate:
             result.duplicates.append(r.doc_id)
+        elif r.was_updated:
+            result.updated.append(r.doc_id)
         else:
             result.ingested.append(r.doc_id)
     return result

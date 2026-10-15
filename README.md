@@ -13,9 +13,10 @@ remote ones) and a browser UI, all against one corpus.
 
 - **Hybrid retrieval** — BM25 (SQLite FTS5) fused with vector search (sqlite-vec) via reciprocal rank fusion.
 - **Content-addressed dedup** — three cheap layers collapse the same document across renamed files, re-downloads, and format conversions.
+- **Updates in place** — re-ingesting a changed file or URL, or replacing a document by id, keeps its id, category and tags and swaps in the new text, chunks, and original.
 - **Mixed corpora** — research papers and household bills coexist in one index; categories and tags keep them from crowding each other out.
 - **Zero-shot labelling** — user-authored category/tag "anchors" let a classifier suggest metadata for new documents, with no training step.
-- **Agent-native** — 19 MCP tools spanning ingest, search, curation, and metadata, identical across the stdio and HTTP transports.
+- **Agent-native** — 20 MCP tools spanning ingest, search, curation, and metadata, identical across the stdio and HTTP transports.
 - **Portable** — one SQLite DB (metadata + FTS + vectors) plus a content-addressed blob store; back it up by copying a directory.
 
 <p align="center">
@@ -49,7 +50,8 @@ text/markdown); normalization applies NFKC folding, ligature expansion, and
 hyphenated-line-break repair — the biggest searchability win for LaTeX-generated
 PDFs. Deduplication runs three layers in order — same source, same raw-byte hash,
 same normalized-text hash — so re-downloads, renamed copies, and PDF↔HTML
-re-exports of the same content collapse to a single document.
+re-exports of the same content collapse to a single document. A known file or
+URL whose content changed is updated in place instead.
 
 **Retrieval** runs two searches per query and fuses them: BM25 over FTS5 and
 cosine nearest-neighbours over sqlite-vec, combined with reciprocal rank fusion
@@ -88,7 +90,11 @@ $ALEXANDRIA_HOME/
 # ingest a single file with a category and tags
 uv run alexandria ingest ~/Docs/paper.pdf --category research --tags ml,retrieval
 
+# replace an existing document's content by id (keeps id, category, tags)
+uv run alexandria ingest ~/Docs/paper-v2.pdf --replaces <doc_id>
+
 # walk a folder (recursive, supported extensions only by default)
+# prints: N new · N updated · N duplicates · N errors · N scanned
 uv run alexandria ingest-folder ~/Docs/Bills --category bills --tags 2026
 
 # fetch and ingest a URL; category may come from config.toml rules
@@ -154,8 +160,8 @@ tags      = ["utility", "electric"]
 
 ## MCP integration
 
-Alexandria exposes its full surface over MCP — 19 tools spanning ingestion
-(`ingest_folder_tool`, `ingest_url_tool`), retrieval (`search_tool`,
+Alexandria exposes its full surface over MCP — 20 tools spanning ingestion
+(`ingest_folder_tool`, `ingest_url_tool`, `store_document_tool`), retrieval (`search_tool`,
 `get_document_tool`, `list_documents_tool`, `get_catalog_tool`,
 `get_original_tool`), curation (`delete_document_tool`, `rename_category_tool`,
 `delete_category_tool`, `rename_tag_tool`, `delete_tag_tool`), metadata
@@ -164,11 +170,17 @@ anchors (`list_anchors_tool`, `set_anchor_tool`, `delete_anchor_tool`,
 `import_anchors_tool`, `export_anchors_tool`). The tool surface is identical
 across both transports.
 
+`store_document_tool(content, filename, category?, tags?, doc_id?)` lets an agent
+save a note it wrote (`.md`, `.markdown`, `.txt`, `.html`, `.htm`; capped at
+`[web] max_upload_mb`). Without `doc_id` it never overwrites anything; with
+`doc_id` it replaces that document's content. The ingest tools report
+`updated` / `was_updated` when a document was updated in place.
+
 `ingest_folder_tool` reads files on the **server**, so it only works on folders
 listed under `[ingest] allowed_roots` in `config.toml` (symlinks are resolved
 before the check). Every tool also carries MCP annotations (`readOnlyHint` /
-`destructiveHint`), so clients can ask before running deletes, renames, or
-bulk metadata writes. That matters because ingested text is untrusted and flows
+`destructiveHint`), so clients can ask before running deletes, renames,
+ingests (which can replace a document's content), or bulk metadata writes. That matters because ingested text is untrusted and flows
 back to the agent.
 
 ### Local (stdio)
@@ -257,13 +269,15 @@ MCP client side — the MCP bearer token and the web password are independent.
 ### What's there
 
 - **`/`** — landing: catalog totals, drop zone for multi-file upload (PDF /
-  HTML / TXT / MD), live activity feed of ingest jobs.
+  HTML / TXT / MD), live activity feed of ingest jobs (new, updated, duplicate).
 - **`/search`** — hybrid FTS + vector search, filterable by category and tags.
   Hit cards link into the doc detail page. FTS matches are highlighted with
   `<mark>` in the UI and `**…**` in the JSON/MCP API.
 - **`/documents`** — filterable, paginated document browser.
 - **`/documents/{id}`** — full metadata, sources, tags, and a lazy-loaded
-  "Show extracted text" panel.
+  "Show extracted text" panel, plus an **Upload new version** button that
+  replaces the document's content with a new file (same id, category and tags
+  kept).
 
 ![Document browser: filter by category and tags, with type, size, and ingest time per row](docs/screenshots/documents.png)
 
@@ -297,6 +311,7 @@ GET    /api/search?q=…               same shape as MCP search_tool
 GET    /api/documents                filterable, paged
 GET    /api/documents/{id}           optional ?include_text=true
 POST   /api/upload                   multipart files[] + category + tags
+POST   /api/documents/{id}/content   multipart file + optional category, tags (new version)
 POST   /api/ingest-url               {url, category, tags}
 GET    /api/jobs                     recent job rows
 GET    /api/jobs/{id}
@@ -304,7 +319,7 @@ POST   /api/jobs/{id}/cancel
 GET    /api/jobs/stream              SSE stream of status transitions
 ```
 
-Ingest via `/api/upload` and `/api/ingest-url` is asynchronous: each file/URL
+Ingest via `/api/upload`, `/api/documents/{id}/content` and `/api/ingest-url` is asynchronous: each file/URL
 becomes a `jobs` row, processed by a single background worker. If the server
 restarts mid-job, that row is swept to `error`; queued rows resume.
 
@@ -342,7 +357,7 @@ delete_tag_tool(name)                     → {"affected": N}
 
 ```sh
 uv sync                           # dev deps included in `dev` group
-uv run pytest                     # 263 passing (+1 GPU-gated), ~20 s
+uv run pytest                     # 377 passing (+1 GPU-gated), ~20 s
 uv run ruff check src tests
 ```
 
@@ -384,13 +399,39 @@ pypdf on that document so ingest stays robust.
 
 Three cheap layers, always run, in this order:
 
-1. **Source** — same `(source_kind, source_uri)` was ingested before.
+1. **Source** — the same file path or URL was ingested before (uploads and
+   Claude notes are matched by content only). Unchanged content there is a
+   duplicate; changed content updates that document instead (see below).
 2. **Raw bytes** — `sha256(bytes)` matches an existing document.
 3. **Normalized text** — `sha256(normalized_text)` matches (catches re-exported
    PDFs, mirrored HTML, format conversions).
 
 A duplicate hit updates `last_seen_at`, records the alternate `source_uri`, and
 merges any new tags. Near-duplicate detection (MinHash/simhash) is not implemented.
+
+### Updating documents
+
+- **Same path or URL, new content** — re-ingesting a file or URL Alexandria has
+  seen before updates that document in place: same id, tags kept (and merged
+  with any new ones), category untouched. A whitespace-only change counts as a
+  duplicate, not an update.
+- **Copies** — a document found at several paths (a note and a copy of it)
+  follows the oldest one that still exists. An edited copy becomes its own
+  document and the original keeps its id, category and tags; if the original
+  file is gone, the copy takes over the document.
+- **Different path** — name the document to replace: `alexandria ingest new.md
+  --replaces <doc_id>`, the **Upload new version** button on the document page,
+  or `doc_id` on `store_document_tool`. An explicit update may also set a new
+  category. It is refused (nothing changes) if the document doesn't exist, the
+  new content already exists as a different document, or the new source belongs
+  to a different document.
+- **Uploads and Claude notes never match by filename** — without a target they
+  are only deduplicated by content, so a new upload named like an old one is a
+  new document.
+- An update replaces the text, chunks, search indexes and stored original, and
+  the document's sources become just the one the new content came from. Only
+  the replaced version is discarded; if anything fails, the document is left
+  untouched.
 
 ## Label anchors
 

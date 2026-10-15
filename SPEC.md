@@ -48,30 +48,51 @@ Each source (file or URL) flows through:
 
 1. **Fetch** — get bytes + source metadata (path or URL, mtime, HTTP content-type).
 2. **Content-type detect** — sniff magic bytes; classify as `pdf | html | txt | md`. Don't trust extensions blindly.
-3. **Raw-bytes hash** (`sha256_raw`) → *dedup gate 1*. If seen, skip re-processing and return the existing `doc_id`.
+3. **Resolve against the corpus** (see §4). Known `file`/`url` source is *gate 1*; raw-bytes hash (`sha256_raw`) is *gate 2*. A hit skips re-processing and returns the existing `doc_id`; changed content from a known source becomes an in-place update.
 4. **Extract** — text + structural metadata (title, author, publication date when available):
    - PDF: `pypdf` for text-first PDFs; fall back to `pdfplumber` if extracted text is empty.
    - HTML: `trafilatura` (main-content extraction, strips nav/ads/boilerplate).
    - TXT/MD: read as UTF-8; markdown is kept as-is (searchable as text).
 5. **Normalize** — Unicode NFKC (folds superscript/subscript digits, Greek variants, compatibility math operators — the biggest win for LaTeX-generated PDFs), expand ligatures (ﬁ/ﬀ/ﬂ/ﬃ/ﬄ/st), strip zero-widths and soft hyphens, repair `word-\nword` line-break hyphenation, form-feed → paragraph, drop lone surrogates + C0/C1 control chars, collapse whitespace. See M11.
-6. **Text hash** (`sha256_text`) → *dedup gate 2*. Catches re-exported PDFs, mirrored HTML, and format conversions of the same content.
+6. **Text hash** (`sha256_text`) → *dedup gate 3*. Catches re-exported PDFs, mirrored HTML, and format conversions of the same content.
 7. **Chunk** — 800-token windows with 100-token overlap. Store chunk char offsets back into the full text.
 8. **Embed** — per-chunk vectors. Default model recorded on the document so we can re-embed selectively when swapping models.
-9. **Index** — INSERT into `documents`, `chunks`, FTS5 mirrors, and `sqlite-vec` mirror in a single transaction.
+9. **Index** — INSERT (or, for an update, replace the document's rows in place) into `documents`, `chunks`, FTS5 mirrors, and `sqlite-vec` mirror in a single transaction.
 
 Failure mode: on `ingest_folder`, a single bad file is skipped and reported in the `errors[]` return; the walk continues.
 
-## 4. Deduplication
+## 4. Deduplication and updates
 
-Three layers, each cheap enough to always run:
+Three gates, in this order, each cheap enough to always run:
 
-| Layer | Key | Catches |
+| Gate | Key | Catches |
 |---|---|---|
-| 1. Source | `(source_kind, source_uri)` | Same file/URL ingested twice |
+| 1. Source | `(source_kind, source_uri)`, `file`/`url` only | Same file/URL ingested again (unchanged → duplicate, changed → update) |
 | 2. Raw bytes | `sha256(raw_bytes)` | Same file under different names/paths |
 | 3. Normalized text | `sha256(normalized_text)` | Same content, different container (PDF↔HTML, re-export) |
 
-On a hit at any layer: return the existing `doc_id`, update `last_seen_at`, and append the new source to `document_sources` (a document can have many sources).
+A duplicate hit returns the existing `doc_id`, updates `last_seen_at`, appends the new source to `document_sources` (a document can have many sources) and merges any new tags.
+
+### Resolution order
+
+For every ingest the first matching rule wins.
+
+1. **Explicit target** (`doc_id` / `--replaces` / "Upload new version"). Unknown target → `DocumentNotFound`. New source already belongs to a different doc → `SourceConflict`. Same bytes or same normalized text as the target → unchanged duplicate (`dedup_gate` `raw`/`text`). Same bytes or text as a *different* doc → `ContentConflict`. Otherwise the target is updated in place. A refused update changes nothing.
+2. **No target, known `file`/`url` source.** Same bytes → duplicate (`dedup_gate="source"`). Same normalized text (e.g. a CRLF or whitespace-only change) → duplicate (`"text"`). Otherwise the source's document is updated in place (if this is its primary source, see *Sources on update*): same id, tags kept and merged, category untouched (the sweep always passes a category; it must not undo a manual recategorization). If the new content exactly matches a *different* document, the source is moved to that document and reported as a duplicate; the old document is kept even if it ends up with no sources.
+3. **No target, unknown source — and always for `upload`/`mcp` sources.** Raw-bytes gate → duplicate; normalized-text gate → duplicate; else a new document. Uploads and Claude-authored notes carry only a filename, so they never match by source.
+
+### What an update keeps and replaces
+
+- **Keeps:** `id`, `category` (unless an explicit update passes one), existing tags.
+- **Replaces:** hashes, content type, title/author/date, extracted text, extractor, embed model, byte size, chunks, `chunks_fts`, `chunks_vec`, `documents_fts` rows, and the stored original blob. `ingested_at` and `last_seen_at` are set to now. The classifier is not run.
+- Only the replaced version is discarded; search never returns old text, and the old blob is unlinked after the transaction commits.
+- Failures (extraction, embedding, or the DB transaction) leave the document exactly as it was.
+
+### Sources on update
+
+After an update the document has exactly one source: the one the new content came from. Other sources are detached, since they still hold the old content and would otherwise make every sweep flip the document between files. A detached file is ingested as its own document on the next sweep.
+
+A document found at several sources (a note and a copy of it) follows only its *primary* source: the oldest one that still exists (a file whose path is gone doesn't count). New content at any other source splits that source off into a document of its own (or onto an existing document it duplicates), detaching it in the same transaction, so an edited copy never takes over the original's id, category and tags. If the original file is gone, the copy is the primary source and updates the document in place.
 
 Near-duplicate detection (MinHash/simhash) is explicitly **out of scope for v1**.
 
@@ -97,7 +118,7 @@ documents (
 
 document_sources (                    -- one doc, many sources
   doc_id       TEXT NOT NULL,
-  source_kind  TEXT NOT NULL,         -- 'file' | 'url'
+  source_kind  TEXT NOT NULL,         -- 'file' | 'url' | 'upload' | 'mcp'
   source_uri   TEXT NOT NULL,
   seen_at      TEXT NOT NULL,
   PRIMARY KEY (doc_id, source_kind, source_uri)
@@ -160,10 +181,16 @@ Two mechanisms, both explicit — no LLM auto-classification in v1:
 
 ```
 ingest_folder(path, recursive=true, category?, tags?, glob?)
-  → {ingested: [doc_id...], skipped_duplicates: N, errors: [{path, reason}, ...]}
+  → {ingested, updated, duplicates, errors: [{path, reason}, ...], scanned}
 
 ingest_url(url, category?, tags?)
-  → {doc_id, was_duplicate: bool, title, category, tags}
+  → {doc_id, was_duplicate, was_updated, dedup_gate, title, content_type, n_chunks}
+
+store_document(content, filename, category?, tags?, doc_id?)
+  → {doc_id, was_duplicate, was_updated, dedup_gate, title, content_type, n_chunks}
+    filename must be .md/.markdown/.txt/.html/.htm; size capped by the web
+    max_upload_mb. Without doc_id it never overwrites an existing document;
+    with doc_id it replaces that document's content.
 
 search(query, category?, tags?, limit=10, mode="hybrid")
   → [{chunk_id, doc_id, score, snippet, title, category, tags, source_uri}, ...]
@@ -229,6 +256,10 @@ alexandria/
     test_ingest.py
     test_dedup.py
     test_search.py
+    test_updates.py
+    test_store.py
+    test_cli.py
+    test_mcp_store.py
 ```
 
 ## 11. Resolved defaults (previously "open questions")
@@ -245,9 +276,9 @@ alexandria/
 ## 12. Milestones
 
 1. **M1 — Skeleton.** Repo, config loader, SQLite schema + migrations, sqlite-vec loaded, no MCP yet. CLI to ingest a single file end-to-end.
-2. **M2 — Ingest.** All four content types, all three dedup layers, folder walker, URL fetcher with heuristics.
+2. **M2 — Ingest.** All four content types, all three dedup gates, folder walker, URL fetcher with heuristics.
 3. **M3 — Search.** FTS5 + vec + RRF, filters by category/tags.
-4. **M4 — MCP.** Wire the six tools to the ingest/search/catalog layers. Manual test with Claude Code.
+4. **M4 — MCP.** Wire the tools to the ingest/search/catalog layers. Manual test with Claude Code.
 5. **M5 — Polish.** Fixture corpus + tests, README with install/config, error surfaces reviewed.
 6. **M6 — Math-fidelity PDF backend.** Optional `marker` extractor (LaTeX-in-markdown output + surya OCR) selected via `[extractors.pdf] backend = "marker"`. Pypdf kept as fast default + robust fallback on marker failure. Server-primary deploy: install marker only where a GPU exists (`uv sync --extra marker`).
 7. **M7 — Network transport.** Streamable HTTP MCP transport with bearer-token auth so agents on other machines can hit the corpus on the GPU server. See §13.

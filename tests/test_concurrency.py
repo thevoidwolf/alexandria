@@ -6,10 +6,13 @@ import asyncio
 import threading
 from pathlib import Path
 
+import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 import alexandria.ingest.orchestrator as orch
+from alexandria import curate
+from alexandria.ingest import DocumentNotFound
 from alexandria.ingest.fetch import fetch_file
 from alexandria.ingest.orchestrator import ingest_fetched
 from alexandria.web.api import build_api_routes
@@ -67,6 +70,37 @@ def test_ingest_rechecks_dedup_after_unlocked_phase(
     assert r.dedup_gate == "raw"
     assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM document_sources").fetchone()[0] == 2
+
+
+def test_target_deleted_during_embed_is_refused(
+    cfg, conn, corpus_dir: Path, fake_embed, monkeypatch
+):
+    """The target vanished while we embedded → refused, not resurrected."""
+    lock = threading.Lock()
+    target = ingest_fetched(fetch_file(corpus_dir / "plain.txt"), conn, cfg, lock=lock)
+
+    real_embed = orch.embed_texts
+    raced = False
+
+    def racing_embed(texts, emb_cfg):
+        nonlocal raced
+        if not raced:
+            raced = True
+            with lock:
+                curate.delete_document(target.doc_id, conn, cfg)
+        return real_embed(texts, emb_cfg)
+
+    monkeypatch.setattr(orch, "embed_texts", racing_embed)
+
+    with pytest.raises(DocumentNotFound) as exc:
+        ingest_fetched(
+            fetch_file(corpus_dir / "note.md"), conn, cfg, lock=lock,
+            target_doc_id=target.doc_id,
+        )
+    assert raced
+    assert exc.value.doc_id == target.doc_id
+    assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0
+    assert not lock.locked()
 
 
 def test_api_does_not_block_event_loop_on_db_lock(cfg, conn):

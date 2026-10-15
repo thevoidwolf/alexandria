@@ -184,3 +184,11 @@ def test_document_detail_shows_edit_and_delete_buttons(seeded_client):
     assert 'id="edit-btn"' in r.text
     assert 'id="delete-btn"' in r.text
     assert 'id="known-categories"' in r.text
+
+
+def test_document_detail_shows_upload_version_control(seeded_client):
+    client, conn = seeded_client
+    doc_id = conn.execute("SELECT id FROM documents LIMIT 1").fetchone()[0]
+    html = client.get(f"/documents/{doc_id}").text
+    assert 'id="upload-version-btn"' in html
+    assert 'id="upload-version-file"' in html

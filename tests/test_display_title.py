@@ -70,3 +70,9 @@ def test_search_hit_carries_display_title(cfg, conn, corpus_dir: Path, fake_embe
     # No extractor title on a bare .txt → filename-derived display.
     assert hits[0].display_title == "plain.txt"
     assert hits[0].title in (None, "")
+
+
+def test_basename_from_source_strips_mcp_prefix():
+    from alexandria.originals import basename_from_source
+
+    assert basename_from_source("mcp:note.md") == "note.md"

@@ -18,10 +18,13 @@
       <a href="/files/{{ doc.id }}" target="_blank" rel="noopener" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px; text-decoration: none;">Open original</a>
       <a href="/files/{{ doc.id }}?download=1" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px; text-decoration: none;">Download</a>
       <button type="button" id="suggest-btn" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px;">Suggest metadata</button>
+      <button type="button" id="upload-version-btn" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px;">Upload new version</button>
+      <input type="file" id="upload-version-file" accept=".pdf,.html,.htm,.txt,.md,.markdown" style="display: none;">
       <button type="button" id="edit-btn" class="linklike" style="background: transparent; color: var(--dim); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px;">Edit</button>
       <button type="button" id="delete-btn" class="linklike" style="background: transparent; color: var(--err); border: 1px solid var(--line); padding: 4px 10px; border-radius: 4px; font-size: 12px;">Delete</button>
     </div>
   </div>
+  <div id="upload-version-status" class="dim" style="font-size: 13px; margin-top: 8px; display: none;"></div>
   <div id="meta-view" style="margin-top: 8px;">
     {% if doc.category %}<span class="chip">{{ doc.category }}</span>{% endif %}
     {% for t in doc.tags %}<span class="chip" style="background: transparent; border: 1px solid var(--line); color: var(--dim);">{{ t }}</span>{% endfor %}
@@ -204,6 +207,63 @@
       return;
     }
     location.href = '/documents';
+  });
+
+  // ---- upload new version ------------------------------------------------
+  const versionBtn    = document.getElementById('upload-version-btn');
+  const versionFile   = document.getElementById('upload-version-file');
+  const versionStatus = document.getElementById('upload-version-status');
+
+  const showVersionStatus = (msg, isErr) => {
+    versionStatus.textContent = msg;
+    versionStatus.style.color = isErr ? 'var(--err)' : '';
+    versionStatus.style.display = '';
+  };
+
+  versionBtn.addEventListener('click', () => versionFile.click());
+  versionFile.addEventListener('change', async () => {
+    const file = versionFile.files[0];
+    if (!file) return;
+    versionBtn.disabled = true;
+    showVersionStatus('Uploading…', false);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch('/api/documents/{{ doc.id }}/content', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fd,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        showVersionStatus('Upload failed: ' + (j.error || ('HTTP ' + r.status)), true);
+        return;
+      }
+      showVersionStatus('Processing…', false);
+      while (true) {
+        await new Promise(res => setTimeout(res, 500));
+        const jr = await fetch('/api/jobs/' + j.job_id, { credentials: 'same-origin' });
+        if (!jr.ok) {
+          showVersionStatus('Upload failed: HTTP ' + jr.status, true);
+          return;
+        }
+        const job = await jr.json();
+        if (job.status === 'done') { location.reload(); return; }
+        if (job.status === 'error') {
+          showVersionStatus('Update failed: ' + (job.error || 'unknown error'), true);
+          return;
+        }
+        if (job.status === 'cancelled') {
+          showVersionStatus('Update cancelled.', true);
+          return;
+        }
+      }
+    } catch (e) {
+      showVersionStatus('Upload failed: ' + e.message, true);
+    } finally {
+      versionBtn.disabled = false;
+      versionFile.value = '';
+    }
   });
 
   // ---- suggest metadata --------------------------------------------------

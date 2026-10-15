@@ -30,8 +30,9 @@ def mime_for(content_type: str) -> str:
 def basename_from_source(source_uri: str | None) -> str | None:
     """Extract a display-friendly basename from a source URI, or None.
 
-    Handles the three source-URI flavors Alexandria records:
+    Handles the four source-URI flavors Alexandria records:
       - ``upload:foo.pdf`` (web upload; take the part after the prefix)
+      - ``mcp:note.md`` (content stored through the MCP server; same shape)
       - ``http(s)://.../paper.pdf?x=y`` (URL; take path basename, url-decoded)
       - ``/abs/path/foo.pdf`` (filesystem; take Path().name)
 
@@ -42,7 +43,7 @@ def basename_from_source(source_uri: str | None) -> str | None:
     if not source_uri:
         return None
 
-    if source_uri.startswith("upload:"):
+    if source_uri.startswith(("upload:", "mcp:")):
         candidate = source_uri.split(":", 1)[1]
     elif source_uri.startswith(("http://", "https://")):
         parts = urlsplit(source_uri)

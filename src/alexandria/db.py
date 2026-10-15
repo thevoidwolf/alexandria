@@ -62,8 +62,10 @@ CREATE TABLE IF NOT EXISTS chunks (
 CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id, ord);
 
 -- Standalone FTS tables (not external-content). Simpler bookkeeping;
--- rowid is stored explicitly and matches chunks.rowid / documents.rowid
--- via our INSERT ordering. Costs some disk, buys simple code.
+-- costs some disk, buys simple code. chunks_fts rows are inserted with
+-- rowid = chunks.rowid and deleted by it. documents_fts rowids are
+-- SQLite-assigned and unrelated to documents.rowid (an update re-inserts
+-- the row under a new one): its rows are keyed and deleted by doc_id.
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
     doc_id UNINDEXED,
     title,

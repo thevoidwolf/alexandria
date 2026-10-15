@@ -13,10 +13,8 @@ from __future__ import annotations
 import sqlite3
 
 from alexandria.config import Config
-
-
-def _blob_path(cfg: Config, sha: str):
-    return cfg.blobs_dir / sha[:2] / sha
+from alexandria.ingest.store import delete_chunks
+from alexandria.originals import blob_path
 
 
 def delete_document(doc_id: str, conn: sqlite3.Connection, cfg: Config) -> bool:
@@ -30,13 +28,7 @@ def delete_document(doc_id: str, conn: sqlite3.Connection, cfg: Config) -> bool:
 
     conn.execute("BEGIN")
     try:
-        # sqlite-vec has no doc_id column; scope via chunks.rowid.
-        conn.execute(
-            "DELETE FROM chunks_vec WHERE chunk_rowid IN "
-            "(SELECT rowid FROM chunks WHERE doc_id = ?)",
-            (doc_id,),
-        )
-        conn.execute("DELETE FROM chunks_fts WHERE doc_id = ?", (doc_id,))
+        delete_chunks(conn, doc_id)
         conn.execute("DELETE FROM documents_fts WHERE doc_id = ?", (doc_id,))
         # ON DELETE CASCADE cleans document_sources, tags, chunks.
         conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
@@ -45,7 +37,7 @@ def delete_document(doc_id: str, conn: sqlite3.Connection, cfg: Config) -> bool:
         conn.execute("ROLLBACK")
         raise
 
-    blob = _blob_path(cfg, raw_sha)
+    blob = blob_path(cfg, raw_sha)
     try:
         blob.unlink()
     except FileNotFoundError:

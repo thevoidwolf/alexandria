@@ -13,7 +13,7 @@ from rich.table import Table
 from alexandria.common import split_tags
 from alexandria.config import load as load_config
 from alexandria.db import connect
-from alexandria.ingest import ingest_file, ingest_folder, ingest_url
+from alexandria.ingest import UpdateRefused, ingest_file, ingest_folder, ingest_url
 from alexandria.ingest.fetch import RobotsDisallowed
 from alexandria.search import SEARCH_MODES, search
 
@@ -35,6 +35,8 @@ def _friendly_errors(fn):
             console.print(f"[red]error:[/] robots.txt disallows fetching {e}")
         except httpx.HTTPError as e:
             console.print(f"[red]error:[/] HTTP failure: {e}")
+        except UpdateRefused as e:
+            console.print(f"[red]error:[/] {e}")
         except ValueError as e:
             console.print(f"[red]error:[/] {e}")
         raise typer.Exit(code=1)
@@ -48,15 +50,28 @@ def ingest(
     path: Path = typer.Argument(..., help="File to ingest"),
     category: Optional[str] = typer.Option(None, "--category", "-c"),
     tags: Optional[str] = typer.Option(None, "--tags", "-t", help="Comma-separated"),
+    replaces: Optional[str] = typer.Option(
+        None, "--replaces",
+        help="ID of the document this file is a new version of",
+    ),
 ) -> None:
     """Ingest a single file end-to-end."""
     cfg = load_config()
     conn = connect(cfg.db_path, cfg.embeddings.dim)
-    result = ingest_file(path, conn, cfg, category=category, tags=split_tags(tags))
+    result = ingest_file(
+        path, conn, cfg, category=category, tags=split_tags(tags),
+        target_doc_id=replaces,
+    )
 
     if result.was_duplicate:
         console.print(
             f"[yellow]duplicate[/] via [bold]{result.dedup_gate}[/] gate → doc_id=[cyan]{result.doc_id}[/]"
+        )
+    elif result.was_updated:
+        console.print(
+            f"[blue]updated[/] doc_id=[cyan]{result.doc_id}[/] "
+            f"type={result.content_type} chunks={result.n_chunks} "
+            f"title={result.title!r}"
         )
     else:
         console.print(
@@ -85,6 +100,7 @@ def ingest_folder_cmd(
     )
     console.print(
         f"[green]{len(result.ingested)}[/] new · "
+        f"[blue]{len(result.updated)}[/] updated · "
         f"[yellow]{len(result.duplicates)}[/] duplicates · "
         f"[red]{len(result.errors)}[/] errors · "
         f"{result.scanned} scanned"
@@ -109,6 +125,12 @@ def ingest_url_cmd(
         console.print(
             f"[yellow]duplicate[/] via [bold]{result.dedup_gate}[/] gate → "
             f"doc_id=[cyan]{result.doc_id}[/]"
+        )
+    elif result.was_updated:
+        console.print(
+            f"[blue]updated[/] doc_id=[cyan]{result.doc_id}[/] "
+            f"type={result.content_type} chunks={result.n_chunks} "
+            f"title={result.title!r}"
         )
     else:
         console.print(
