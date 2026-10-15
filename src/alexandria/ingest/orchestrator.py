@@ -67,6 +67,18 @@ class IngestResult:
     was_updated: bool = False  # existing doc's content replaced in place
 
 
+@dataclass(frozen=True)
+class _NewDoc:
+    """``_resolve``'s answer when the content becomes a new document.
+
+    ``detach_from`` names a document that also lists the ingested source
+    (an edited copy being split off); the new document takes the source
+    from it in the same transaction as the insert.
+    """
+
+    detach_from: str | None = None
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -102,6 +114,16 @@ def _record_source(
     )
 
 
+def _detach_source(
+    conn: sqlite3.Connection, doc_id: str, source_kind: str, source_uri: str
+) -> None:
+    conn.execute(
+        "DELETE FROM document_sources "
+        "WHERE doc_id = ? AND source_kind = ? AND source_uri = ?",
+        (doc_id, source_kind, source_uri),
+    )
+
+
 def _add_tags(conn: sqlite3.Connection, doc_id: str, tags: list[str]) -> None:
     for tag in tags:
         conn.execute(
@@ -117,6 +139,29 @@ def _lookup_by_source(
         (source_kind, source_uri),
     ).fetchone()
     return row[0] if row else None
+
+
+def _is_primary_source(
+    conn: sqlite3.Connection, doc_id: str, source_kind: str, source_uri: str
+) -> bool:
+    """Whether edits at this source of ``doc_id`` update the doc in place.
+
+    A doc whose content sits at several sources (a note and its copy)
+    belongs to its oldest source that still exists, so editing the copy
+    can't take over the original's id, category and tags. A ``file`` whose
+    path is gone doesn't count; other kinds can't be checked and always
+    do, as does the source being ingested.
+    """
+    for kind, uri in conn.execute(
+        "SELECT source_kind, source_uri FROM document_sources "
+        "WHERE doc_id = ? ORDER BY rowid",
+        (doc_id,),
+    ).fetchall():
+        if (kind, uri) == (source_kind, source_uri):
+            return True
+        if kind != "file" or Path(uri).exists():
+            return False
+    return True
 
 
 def _lookup_by_raw(conn: sqlite3.Connection, sha: str) -> str | None:
@@ -171,11 +216,13 @@ def _resolve(
     ctype: str,
     cfg: Config,
     target_doc_id: str | None = None,
-) -> IngestResult | str | None:
+) -> IngestResult | str | _NewDoc:
     """Decide what ingesting ``fetched`` does to the store.
 
     Returns a duplicate ``IngestResult`` (its side effects already applied),
-    the id of a document to update in place, or ``None`` to insert a new one.
+    the id of a document to update in place, or a ``_NewDoc`` to insert a
+    new one. Updates and new docs write nothing here, so the answer may
+    change between calls; the caller acts only on the final one.
     ``text_sha=None`` (before extraction) skips every text comparison.
     With ``target_doc_id`` the answer is that document or a duplicate of it;
     an ``UpdateRefused`` is raised before anything is written otherwise.
@@ -246,11 +293,7 @@ def _resolve(
         if other:
             conn.execute("BEGIN")
             try:
-                conn.execute(
-                    "DELETE FROM document_sources "
-                    "WHERE doc_id = ? AND source_kind = ? AND source_uri = ?",
-                    (owner, kind, uri),
-                )
+                _detach_source(conn, owner, kind, uri)
                 _record_source(conn, other, kind, uri)
                 _add_tags(conn, other, tags)
                 conn.execute("COMMIT")
@@ -258,7 +301,11 @@ def _resolve(
                 conn.execute("ROLLBACK")
                 raise
             return dup(other, gate)
-        return owner
+        if _is_primary_source(conn, owner, kind, uri):
+            return owner
+        # An edited copy of the owner's primary source: it becomes its own
+        # document and the owner keeps its content, id, category and tags.
+        return _NewDoc(detach_from=owner)
 
     if other := _lookup_by_raw(conn, raw_sha):
         _record_source(conn, other, kind, uri)
@@ -268,7 +315,7 @@ def _resolve(
         _record_source(conn, other, kind, uri)
         _add_tags(conn, other, tags)
         return dup(other, "text")
-    return None
+    return _NewDoc()
 
 
 def _apply_update(
@@ -294,9 +341,13 @@ def _apply_update(
     now = _now()
     conn.execute("BEGIN")
     try:
-        (old_raw,) = conn.execute(
+        row = conn.execute(
             "SELECT sha256_raw FROM documents WHERE id = ?", (doc_id,)
         ).fetchone()
+        if row is None:
+            # Deleted by another process since _resolve: the lock is per process.
+            raise DocumentNotFound(doc_id)
+        (old_raw,) = row
         conn.execute(
             """
             UPDATE documents SET
@@ -345,7 +396,9 @@ def ingest_fetched(
     """Dedup, extract, chunk, embed and store one fetched document.
 
     New content at a known ``file``/``url`` source updates that document in
-    place (same id, tags and category; ``category`` is ignored then).
+    place (same id, tags and category; ``category`` is ignored then), unless
+    the source is a copy of the doc's older, still-existing source: then it
+    becomes a new document and is detached from the old one.
 
     ``target_doc_id`` names the document ``fetched`` replaces, whatever its
     source; a ``category`` passed then replaces the doc's. Raises
@@ -413,7 +466,7 @@ def ingest_fetched(
         )
         if isinstance(target, IngestResult):
             return target
-        if target is not None:
+        if isinstance(target, str):
             old_raw = _apply_update(
                 conn, target, fetched, raw_sha, text_sha, ex, ctype, chunks,
                 embeddings, tags, category=category if target_doc_id else None,
@@ -445,6 +498,11 @@ def ingest_fetched(
                 "INSERT INTO document_sources(doc_id, source_kind, source_uri, seen_at) VALUES (?, ?, ?, ?)",
                 (doc_id, fetched.source_kind, fetched.source_uri, now),
             )
+            if target.detach_from:
+                _detach_source(
+                    conn, target.detach_from,
+                    fetched.source_kind, fetched.source_uri,
+                )
             _add_tags(conn, doc_id, tags)
 
             conn.execute(

@@ -7,14 +7,18 @@ from pathlib import Path
 
 import pytest
 
+import alexandria.ingest.orchestrator as orch
+from alexandria.curate import delete_document
 from alexandria.ingest import (
     ContentConflict,
     DocumentNotFound,
     SourceConflict,
     ingest_file,
 )
-from alexandria.ingest.fetch import Fetched
-from alexandria.ingest.hash import sha256_bytes
+from alexandria.ingest.chunk import chunk_text
+from alexandria.ingest.extract import extract
+from alexandria.ingest.fetch import Fetched, fetch_file
+from alexandria.ingest.hash import sha256_bytes, sha256_text
 from alexandria.ingest.orchestrator import ingest_fetched
 from alexandria.originals import blob_path, lookup_blob_for
 from alexandria.search import search
@@ -207,6 +211,107 @@ def test_edit_into_copy_of_other_doc_moves_source(cfg, conn, tmp_path, fake_embe
     assert str(a) in _sources(conn, rb.doc_id)
     assert _doc(conn, ra.doc_id)[1] == a_text
     assert _sources(conn, ra.doc_id) == []
+
+
+EDITED_COPY = "# A\n\na new derived note\n"
+
+
+def _curated_original_with_copy(cfg, conn, tmp_path):
+    """b.md is doc B (curated); a.md, a byte copy of it, is attached to B."""
+    b = _write(tmp_path / "b.md", ORIGINAL)
+    bid = ingest_file(b, conn, cfg, category="projects", tags=["important"]).doc_id
+    a = tmp_path / "a.md"
+    a.write_bytes(b.read_bytes())
+    r = ingest_file(a, conn, cfg)
+    assert (r.doc_id, r.dedup_gate) == (bid, "raw")
+    return a, b, bid
+
+
+def test_edited_copy_splits_off_and_original_keeps_identity(
+    cfg, conn, tmp_path, fake_embed
+):
+    a, b, bid = _curated_original_with_copy(cfg, conn, tmp_path)
+    before = _doc(conn, bid)
+
+    _write(a, EDITED_COPY)
+    r = ingest_file(a, conn, cfg)
+
+    assert r.doc_id != bid
+    assert (r.was_updated, r.was_duplicate) == (False, False)
+    assert _sources(conn, bid) == [str(b)]
+    assert _doc(conn, bid) == before
+    assert _tags(conn, bid) == ["important"]
+    assert _sources(conn, r.doc_id) == [str(a)]
+    assert "derived note" in _doc(conn, r.doc_id)[1]
+    # Each file now has its own document: the next sweep changes nothing.
+    assert ingest_file(b, conn, cfg).dedup_gate == "source"
+    assert ingest_file(a, conn, cfg).doc_id == r.doc_id
+
+
+def test_edited_copy_takes_over_when_original_is_gone(
+    cfg, conn, tmp_path, fake_embed
+):
+    a, b, bid = _curated_original_with_copy(cfg, conn, tmp_path)
+
+    b.unlink()
+    _write(a, EDITED_COPY)
+    r = ingest_file(a, conn, cfg)
+
+    assert r.was_updated is True
+    assert r.doc_id == bid
+    assert _sources(conn, bid) == [str(a)]
+    assert _doc(conn, bid)[2] == "projects"
+    assert _tags(conn, bid) == ["important"]
+
+
+def test_split_copy_failure_leaves_sources_untouched(
+    cfg, conn, tmp_path, fake_embed
+):
+    a, b, bid = _curated_original_with_copy(cfg, conn, tmp_path)
+
+    a.write_bytes(b"")
+    with pytest.raises(ValueError, match="No extractable text"):
+        ingest_file(a, conn, cfg)
+
+    assert _sources(conn, bid) == sorted([str(a), str(b)])
+
+
+@pytest.mark.parametrize("step", ["insert_chunks", "_detach_source"])
+def test_split_copy_failed_write_leaves_sources_untouched(
+    step, cfg, conn, tmp_path, fake_embed, monkeypatch
+):
+    """The split commits with the new doc's insert or not at all."""
+    a, b, bid = _curated_original_with_copy(cfg, conn, tmp_path)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(f"alexandria.ingest.orchestrator.{step}", boom)
+    _write(a, EDITED_COPY)
+    with pytest.raises(RuntimeError, match="disk full"):
+        ingest_file(a, conn, cfg)
+
+    assert _sources(conn, bid) == sorted([str(a), str(b)])
+    assert _count(conn, "SELECT COUNT(*) FROM documents") == 1
+
+
+def test_copy_edited_after_collision_does_not_steal_identity(
+    cfg, conn, tmp_path, fake_embed
+):
+    a = _write(tmp_path / "a.md", ORIGINAL)
+    b = _write(tmp_path / "b.md", "# B\n\ngamma owls\n")
+    ingest_file(a, conn, cfg)
+    rb = ingest_file(b, conn, cfg)
+    b_text = _doc(conn, rb.doc_id)[1]
+    a.write_bytes(b.read_bytes())
+    assert ingest_file(a, conn, cfg).doc_id == rb.doc_id
+
+    _write(a, "# A2\n\nzeta lynx\n")
+    r = ingest_file(a, conn, cfg)
+
+    assert r.doc_id != rb.doc_id
+    assert _sources(conn, rb.doc_id) == [str(b)]
+    assert _doc(conn, rb.doc_id)[1] == b_text
 
 
 def test_failed_extract_leaves_doc_untouched(cfg, conn, tmp_path, fake_embed):
@@ -439,3 +544,40 @@ def test_explicit_update_can_change_format(cfg, conn, tmp_path, fake_embed):
     assert r.content_type == "txt"
     sha, ctype, _ = lookup_blob_for(conn, ra.doc_id)
     assert (sha, ctype) == (sha256_bytes(d.read_bytes()), "txt")
+
+
+def test_apply_update_on_vanished_doc_raises_not_found(
+    cfg, conn, tmp_path, fake_embed
+):
+    """Another process may delete the doc between the final resolve and the
+    write; the update must refuse cleanly and roll back."""
+    a = _write(tmp_path / "a.md", ORIGINAL)
+    ra = ingest_file(a, conn, cfg)
+    _write(tmp_path / "b.md", "# B\n\ngamma owls\n")
+    ingest_file(tmp_path / "b.md", conn, cfg)
+    _append(a, "\nbeta ravens\n")
+    fetched = fetch_file(a)
+    ex = extract(fetched.data, "md", cfg)
+    chunks = chunk_text(ex.text, cfg.chunking.tokens, cfg.chunking.overlap)
+    embeddings = orch.embed_texts([c.text for c in chunks], cfg.embeddings)
+    delete_document(ra.doc_id, conn, cfg)
+
+    def snapshot():
+        return [
+            conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            for t in (
+                "documents", "document_sources", "tags", "chunks",
+                "chunks_fts", "chunks_vec", "documents_fts",
+            )
+        ]
+
+    before = snapshot()
+    with pytest.raises(DocumentNotFound) as exc:
+        orch._apply_update(
+            conn, ra.doc_id, fetched, sha256_bytes(fetched.data),
+            sha256_text(ex.text), ex, "md", chunks, embeddings, [], None, cfg,
+        )
+
+    assert exc.value.doc_id == ra.doc_id
+    assert snapshot() == before
+    assert not conn.in_transaction
