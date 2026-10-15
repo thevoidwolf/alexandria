@@ -214,6 +214,10 @@ def test_edit_into_copy_of_other_doc_moves_source(cfg, conn, tmp_path, fake_embe
 
 
 EDITED_COPY = "# A\n\na new derived note\n"
+# Same length as EDITED_COPY, so the primary-file check gets past the size
+# comparison and has to compare hashes.
+REVISED_ORIGINAL = "# A\n\nthe note, revised.\n"
+assert len(REVISED_ORIGINAL) == len(EDITED_COPY)
 
 
 def _curated_original_with_copy(cfg, conn, tmp_path):
@@ -356,7 +360,7 @@ def test_original_stays_primary_after_same_edit(cfg, conn, tmp_path, fake_embed)
     ingest_file(a, conn, cfg)
     ingest_file(b, conn, cfg)
 
-    _write(b, "# A\n\nthe original, revised\n")
+    _write(b, REVISED_ORIGINAL)
     rb = ingest_file(b, conn, cfg)
     ra = ingest_file(a, conn, cfg)
 
@@ -388,7 +392,7 @@ def test_different_edits_copy_first_original_keeps_identity(
     a, b, bid = _curated_original_with_copy(cfg, conn, tmp_path)
 
     _write(a, EDITED_COPY)
-    _write(b, "# A\n\nthe original, revised\n")
+    _write(b, REVISED_ORIGINAL)
     ra = ingest_file(a, conn, cfg)
     rb = ingest_file(b, conn, cfg)
 
