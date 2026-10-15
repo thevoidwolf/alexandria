@@ -116,6 +116,46 @@ def test_whitespace_only_edit_is_text_duplicate(cfg, conn, tmp_path, fake_embed)
     assert _doc(conn, r1.doc_id)[1] == before
 
 
+def test_whitespace_only_edit_refreshes_raw_so_next_scan_skips_extract(
+    cfg, conn, tmp_path, fake_embed, monkeypatch
+):
+    a = _write(tmp_path / "a.md", ORIGINAL)
+    r1 = ingest_file(a, conn, cfg)
+    old_sha = sha256_bytes(a.read_bytes())
+
+    a.write_bytes(b"# A  \r\n\r\nalpha wolves   \r\n")
+    new_sha = sha256_bytes(a.read_bytes())
+    r2 = ingest_file(a, conn, cfg)
+
+    assert r2.dedup_gate == "text"
+    assert _doc(conn, r1.doc_id)[0] == new_sha
+    assert blob_path(cfg, new_sha).exists()
+    assert not blob_path(cfg, old_sha).exists()
+
+    def no_extract(*args, **kwargs):
+        raise AssertionError("extract should not run for an unchanged file")
+
+    monkeypatch.setattr("alexandria.ingest.orchestrator.extract", no_extract)
+    assert ingest_file(a, conn, cfg).dedup_gate == "source"
+
+
+def test_text_identical_alias_does_not_refresh_raw(cfg, conn, tmp_path, fake_embed):
+    a = _write(tmp_path / "a.md", ORIGINAL)
+    b = tmp_path / "b.md"
+    b.write_bytes(ORIGINAL.replace("\n", "\r\n").encode())
+    r1 = ingest_file(a, conn, cfg)
+    rb = ingest_file(b, conn, cfg)
+    assert (rb.dedup_gate, rb.doc_id) == ("text", r1.doc_id)
+    assert _sources(conn, r1.doc_id) == sorted([str(a), str(b)])
+    raw_before = _doc(conn, r1.doc_id)[0]
+
+    a.write_bytes(b"# A  \n\nalpha wolves   \n")
+    r = ingest_file(a, conn, cfg)
+
+    assert r.dedup_gate == "text"
+    assert _doc(conn, r1.doc_id)[0] == raw_before
+
+
 def test_url_source_change_updates(cfg, conn, fake_embed):
     r1 = ingest_fetched(
         Fetched(b"v1 text", "url", "https://ex.com/a", "text/plain"), conn, cfg

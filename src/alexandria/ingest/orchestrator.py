@@ -46,6 +46,12 @@ def _write_blob(cfg: Config, sha: str, data: bytes) -> None:
         p.write_bytes(data)
 
 
+def _replace_blob(cfg: Config, old_sha: str, new_sha: str, data: bytes) -> None:
+    """Swap a doc's blob after its ``sha256_raw`` changed; call after COMMIT."""
+    _write_blob(cfg, new_sha, data)
+    blob_path(cfg, old_sha).unlink(missing_ok=True)
+
+
 def _record_source(
     conn: sqlite3.Connection, doc_id: str, source_kind: str, source_uri: str
 ) -> None:
@@ -93,6 +99,34 @@ def _lookup_by_text(conn: sqlite3.Connection, sha: str) -> str | None:
     return row[0] if row else None
 
 
+def _refresh_raw(
+    conn: sqlite3.Connection,
+    doc_id: str,
+    old_raw: str,
+    fetched: Fetched,
+    raw_sha: str,
+    tags: list[str],
+    cfg: Config,
+) -> None:
+    """Point ``doc_id`` at new bytes that extract to the text it already has.
+
+    Text, chunks, embeddings and ``ingested_at`` stay as they are.
+    """
+    conn.execute("BEGIN")
+    try:
+        conn.execute(
+            "UPDATE documents SET sha256_raw = ?, bytes = ?, last_seen_at = ? WHERE id = ?",
+            (raw_sha, len(fetched.data), _now(), doc_id),
+        )
+        _record_source(conn, doc_id, fetched.source_kind, fetched.source_uri)
+        _add_tags(conn, doc_id, tags)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    _replace_blob(cfg, old_raw, raw_sha, fetched.data)
+
+
 def _resolve(
     conn: sqlite3.Connection,
     fetched: Fetched,
@@ -101,12 +135,15 @@ def _resolve(
     tags: list[str],
     title: str | None,
     ctype: str,
+    cfg: Config,
 ) -> IngestResult | str | None:
     """Decide what ingesting ``fetched`` does to the store.
 
     Returns a duplicate ``IngestResult`` (its side effects already applied),
     the id of a document to update in place, or ``None`` to insert a new one.
     ``text_sha=None`` (before extraction) skips every text comparison.
+    Call under the DB lock: a text duplicate may swap the doc's blob after
+    its own COMMIT.
     """
     kind, uri = fetched.source_kind, fetched.source_uri
 
@@ -124,8 +161,19 @@ def _resolve(
             _add_tags(conn, owner, tags)
             return dup(owner, "source")
         if text_sha and text_sha == owner_text:
-            _record_source(conn, owner, kind, uri)
-            _add_tags(conn, owner, tags)
+            # Same text, new bytes (CRLF checkout, re-saved PDF). Adopt the
+            # bytes so the next scan stops at the source gate instead of
+            # extracting again, but only if this source is the owner's one
+            # source: text-identical aliases would flip the raw hash back
+            # and forth.
+            (n_sources,) = conn.execute(
+                "SELECT COUNT(*) FROM document_sources WHERE doc_id = ?", (owner,)
+            ).fetchone()
+            if n_sources == 1 and not _lookup_by_raw(conn, raw_sha):
+                _refresh_raw(conn, owner, owner_raw, fetched, raw_sha, tags, cfg)
+            else:
+                _record_source(conn, owner, kind, uri)
+                _add_tags(conn, owner, tags)
             return dup(owner, "text")
         # The source now holds another document's content: move the source
         # there and leave the owner's old content alone.
@@ -246,7 +294,7 @@ def ingest_fetched(
     raw_sha = sha256_bytes(fetched.data)
 
     with lock:
-        target = _resolve(conn, fetched, raw_sha, None, tags, None, "")
+        target = _resolve(conn, fetched, raw_sha, None, tags, None, "", cfg)
     if isinstance(target, IngestResult):
         return target
 
@@ -270,7 +318,7 @@ def ingest_fetched(
 
     text_sha = sha256_text(ex.text)
     with lock:
-        target = _resolve(conn, fetched, raw_sha, text_sha, tags, ex.title, ctype)
+        target = _resolve(conn, fetched, raw_sha, text_sha, tags, ex.title, ctype, cfg)
     if isinstance(target, IngestResult):
         return target
 
@@ -284,7 +332,7 @@ def ingest_fetched(
     with lock:
         # Another ingest may have stored or changed this content while we
         # were extracting/embedding without the lock.
-        target = _resolve(conn, fetched, raw_sha, text_sha, tags, ex.title, ctype)
+        target = _resolve(conn, fetched, raw_sha, text_sha, tags, ex.title, ctype, cfg)
         if isinstance(target, IngestResult):
             return target
         if target is not None:
@@ -293,8 +341,7 @@ def ingest_fetched(
                 embeddings, tags, None, cfg,
             )
             # Under the lock, after COMMIT, like the insert path below.
-            _write_blob(cfg, raw_sha, fetched.data)
-            blob_path(cfg, old_raw).unlink(missing_ok=True)
+            _replace_blob(cfg, old_raw, raw_sha, fetched.data)
             return IngestResult(
                 target, False, None, ex.title, ctype, len(chunks), was_updated=True
             )
