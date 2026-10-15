@@ -9,13 +9,17 @@ from pathlib import Path
 from ulid import ULID
 
 from alexandria.config import Config
-from alexandria.ingest.chunk import chunk_text
+from alexandria.ingest.chunk import Chunk, chunk_text
 from alexandria.ingest.embed import embed_texts
-from alexandria.ingest.extract import detect_content_type, extract
+from alexandria.ingest.extract import Extracted, detect_content_type, extract
 from alexandria.ingest.fetch import Fetched, fetch_file, fetch_url
 from alexandria.ingest.hash import sha256_bytes, sha256_text
-from alexandria.ingest.store import delete_chunks, insert_chunks  # noqa: F401
+from alexandria.ingest.store import delete_chunks, insert_chunks
 from alexandria.originals import blob_path
+
+# Source kinds whose URI names one evolving document (a path or URL), so new
+# bytes there are an edit. Uploads and MCP texts carry no such identity.
+IDENTITY_KINDS = frozenset({"file", "url"})
 
 
 @dataclass
@@ -26,6 +30,7 @@ class IngestResult:
     title: str | None
     content_type: str
     n_chunks: int
+    was_updated: bool = False  # existing doc's content replaced in place
 
 
 def _now() -> str:
@@ -88,35 +93,133 @@ def _lookup_by_text(conn: sqlite3.Connection, sha: str) -> str | None:
     return row[0] if row else None
 
 
-def _check_raw_dedup(
-    conn: sqlite3.Connection, fetched: Fetched, raw_sha: str, tags: list[str]
-) -> IngestResult | None:
-    """Gates 1 + 2: known source URI, then known raw bytes."""
-    if existing := _lookup_by_source(conn, fetched.source_kind, fetched.source_uri):
-        conn.execute("UPDATE documents SET last_seen_at = ? WHERE id = ?", (_now(), existing))
-        _add_tags(conn, existing, tags)
-        return IngestResult(existing, True, "source", None, "", 0)
-    if existing := _lookup_by_raw(conn, raw_sha):
-        _record_source(conn, existing, fetched.source_kind, fetched.source_uri)
-        _add_tags(conn, existing, tags)
-        return IngestResult(existing, True, "raw", None, "", 0)
-    return None
-
-
-def _check_text_dedup(
+def _resolve(
     conn: sqlite3.Connection,
     fetched: Fetched,
-    text_sha: str,
+    raw_sha: str,
+    text_sha: str | None,
     tags: list[str],
     title: str | None,
     ctype: str,
-) -> IngestResult | None:
-    """Gate 3: normalized text already known."""
-    if existing := _lookup_by_text(conn, text_sha):
-        _record_source(conn, existing, fetched.source_kind, fetched.source_uri)
-        _add_tags(conn, existing, tags)
-        return IngestResult(existing, True, "text", title, ctype, 0)
+) -> IngestResult | str | None:
+    """Decide what ingesting ``fetched`` does to the store.
+
+    Returns a duplicate ``IngestResult`` (its side effects already applied),
+    the id of a document to update in place, or ``None`` to insert a new one.
+    ``text_sha=None`` (before extraction) skips every text comparison.
+    """
+    kind, uri = fetched.source_kind, fetched.source_uri
+
+    def dup(doc_id: str, gate: str) -> IngestResult:
+        return IngestResult(doc_id, True, gate, title, ctype, 0)
+
+    if kind in IDENTITY_KINDS and (owner := _lookup_by_source(conn, kind, uri)):
+        owner_raw, owner_text = conn.execute(
+            "SELECT sha256_raw, sha256_text FROM documents WHERE id = ?", (owner,)
+        ).fetchone()
+        if raw_sha == owner_raw:
+            conn.execute(
+                "UPDATE documents SET last_seen_at = ? WHERE id = ?", (_now(), owner)
+            )
+            _add_tags(conn, owner, tags)
+            return dup(owner, "source")
+        if text_sha and text_sha == owner_text:
+            _record_source(conn, owner, kind, uri)
+            _add_tags(conn, owner, tags)
+            return dup(owner, "text")
+        # The source now holds another document's content: move the source
+        # there and leave the owner's old content alone.
+        gate = "raw"
+        other = _lookup_by_raw(conn, raw_sha)
+        if not other and text_sha:
+            gate, other = "text", _lookup_by_text(conn, text_sha)
+        if other:
+            conn.execute("BEGIN")
+            try:
+                conn.execute(
+                    "DELETE FROM document_sources "
+                    "WHERE doc_id = ? AND source_kind = ? AND source_uri = ?",
+                    (owner, kind, uri),
+                )
+                _record_source(conn, other, kind, uri)
+                _add_tags(conn, other, tags)
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            return dup(other, gate)
+        return owner
+
+    if other := _lookup_by_raw(conn, raw_sha):
+        _record_source(conn, other, kind, uri)
+        _add_tags(conn, other, tags)
+        return dup(other, "raw")
+    if text_sha and (other := _lookup_by_text(conn, text_sha)):
+        _record_source(conn, other, kind, uri)
+        _add_tags(conn, other, tags)
+        return dup(other, "text")
     return None
+
+
+def _apply_update(
+    conn: sqlite3.Connection,
+    doc_id: str,
+    fetched: Fetched,
+    raw_sha: str,
+    text_sha: str,
+    ex: Extracted,
+    ctype: str,
+    chunks: list[Chunk],
+    embeddings,
+    tags: list[str],
+    category: str | None,
+    cfg: Config,
+) -> str:
+    """Replace ``doc_id``'s content with ``fetched``, keeping id, tags and category.
+
+    ``category=None`` leaves the category untouched. The fetched source
+    becomes the doc's only source: aliases that pointed at the old bytes no
+    longer describe it. Returns the doc's previous ``sha256_raw``.
+    """
+    now = _now()
+    conn.execute("BEGIN")
+    try:
+        (old_raw,) = conn.execute(
+            "SELECT sha256_raw FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()
+        conn.execute(
+            """
+            UPDATE documents SET
+                sha256_raw = ?, sha256_text = ?, content_type = ?, title = ?,
+                author = ?, published_at = ?, extracted_text = ?, extractor = ?,
+                embed_model = ?, bytes = ?, ingested_at = ?, last_seen_at = ?,
+                category = COALESCE(?, category)
+            WHERE id = ?
+            """,
+            (
+                raw_sha, text_sha, ctype, ex.title, ex.author, ex.published_at,
+                ex.text, ex.extractor, cfg.embeddings.model, len(fetched.data),
+                now, now, category, doc_id,
+            ),
+        )
+        delete_chunks(conn, doc_id)
+        conn.execute("DELETE FROM documents_fts WHERE doc_id = ?", (doc_id,))
+        conn.execute(
+            "INSERT INTO documents_fts(doc_id, title, extracted_text) VALUES (?, ?, ?)",
+            (doc_id, ex.title or "", ex.text),
+        )
+        insert_chunks(conn, doc_id, chunks, embeddings)
+        conn.execute("DELETE FROM document_sources WHERE doc_id = ?", (doc_id,))
+        conn.execute(
+            "INSERT INTO document_sources(doc_id, source_kind, source_uri, seen_at) VALUES (?, ?, ?, ?)",
+            (doc_id, fetched.source_kind, fetched.source_uri, now),
+        )
+        _add_tags(conn, doc_id, tags)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return old_raw
 
 
 def ingest_fetched(
@@ -130,18 +233,22 @@ def ingest_fetched(
 ) -> IngestResult:
     """Dedup, extract, chunk, embed and store one fetched document.
 
+    New content at a known ``file``/``url`` source updates that document in
+    place (same id, tags and category; ``category`` is ignored then).
+
     ``lock`` guards ``conn``. It is held only around the DB phases, never
     across extraction or embedding (which can take minutes for a large PDF
     on the marker backend), so other readers aren't starved by a long
-    ingest. Because the lock is released mid-ingest, every dedup gate is
-    re-checked just before the insert.
+    ingest. Because the lock is released mid-ingest, ``_resolve`` re-runs
+    just before the write.
     """
     tags = tags or []
     raw_sha = sha256_bytes(fetched.data)
 
     with lock:
-        if dup := _check_raw_dedup(conn, fetched, raw_sha, tags):
-            return dup
+        target = _resolve(conn, fetched, raw_sha, None, tags, None, "")
+    if isinstance(target, IngestResult):
+        return target
 
     # Extract (unlocked)
     if filename_hint:
@@ -163,8 +270,9 @@ def ingest_fetched(
 
     text_sha = sha256_text(ex.text)
     with lock:
-        if dup := _check_text_dedup(conn, fetched, text_sha, tags, ex.title, ctype):
-            return dup
+        target = _resolve(conn, fetched, raw_sha, text_sha, tags, ex.title, ctype)
+    if isinstance(target, IngestResult):
+        return target
 
     # Chunk + embed (unlocked)
     chunks = chunk_text(ex.text, cfg.chunking.tokens, cfg.chunking.overlap)
@@ -174,12 +282,22 @@ def ingest_fetched(
     now = _now()
 
     with lock:
-        # Another ingest may have stored the same content while we were
-        # extracting/embedding without the lock.
-        if dup := _check_raw_dedup(conn, fetched, raw_sha, tags):
-            return dup
-        if dup := _check_text_dedup(conn, fetched, text_sha, tags, ex.title, ctype):
-            return dup
+        # Another ingest may have stored or changed this content while we
+        # were extracting/embedding without the lock.
+        target = _resolve(conn, fetched, raw_sha, text_sha, tags, ex.title, ctype)
+        if isinstance(target, IngestResult):
+            return target
+        if target is not None:
+            old_raw = _apply_update(
+                conn, target, fetched, raw_sha, text_sha, ex, ctype, chunks,
+                embeddings, tags, None, cfg,
+            )
+            # Under the lock, after COMMIT, like the insert path below.
+            _write_blob(cfg, raw_sha, fetched.data)
+            blob_path(cfg, old_raw).unlink(missing_ok=True)
+            return IngestResult(
+                target, False, None, ex.title, ctype, len(chunks), was_updated=True
+            )
 
         conn.execute("BEGIN")
         try:
