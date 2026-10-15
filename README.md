@@ -357,7 +357,7 @@ delete_tag_tool(name)                     → {"affected": N}
 
 ```sh
 uv sync                           # dev deps included in `dev` group
-uv run pytest                     # 377 passing (+1 GPU-gated), ~20 s
+uv run pytest                     # 387 passing (+1 GPU-gated), ~20 s
 uv run ruff check src tests
 ```
 
@@ -418,7 +418,7 @@ merges any new tags. Near-duplicate detection (MinHash/simhash) is not implement
 - **Copies** — a document found at several paths (a note and a copy of it)
   follows the oldest one that still exists. An edited copy becomes its own
   document and the original keeps its id, category and tags; if the original
-  file is gone, the copy takes over the document.
+  file is gone, or already holds the same edit, the copy updates the document.
 - **Different path** — name the document to replace: `alexandria ingest new.md
   --replaces <doc_id>`, the **Upload new version** button on the document page,
   or `doc_id` on `store_document_tool`. An explicit update may also set a new

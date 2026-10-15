@@ -314,6 +314,46 @@ def test_copy_edited_after_collision_does_not_steal_identity(
     assert _doc(conn, rb.doc_id)[1] == b_text
 
 
+def test_same_edit_to_copy_and_original_keeps_curated_doc(
+    cfg, conn, tmp_path, fake_embed
+):
+    """Mirrored folders: both files get the same edit and the sweep reaches
+    the copy first. The doc follows the edit instead of splitting the copy
+    off and then losing the original to it."""
+    a, b, bid = _curated_original_with_copy(cfg, conn, tmp_path)
+
+    _write(a, EDITED_COPY)
+    _write(b, EDITED_COPY)
+    ra = ingest_file(a, conn, cfg)
+    rb = ingest_file(b, conn, cfg)
+
+    assert (ra.doc_id, ra.was_updated) == (bid, True)
+    assert (rb.doc_id, rb.dedup_gate) == (bid, "raw")
+    assert _count(conn, "SELECT COUNT(*) FROM documents") == 1
+    assert _sources(conn, bid) == sorted([str(a), str(b)])
+    assert "derived note" in _doc(conn, bid)[1]
+    assert _doc(conn, bid)[2] == "projects"
+    assert _tags(conn, bid) == ["important"]
+
+
+def test_different_edits_copy_first_original_keeps_identity(
+    cfg, conn, tmp_path, fake_embed
+):
+    a, b, bid = _curated_original_with_copy(cfg, conn, tmp_path)
+
+    _write(a, EDITED_COPY)
+    _write(b, "# A\n\nthe original, revised\n")
+    ra = ingest_file(a, conn, cfg)
+    rb = ingest_file(b, conn, cfg)
+
+    assert ra.doc_id != bid
+    assert (rb.doc_id, rb.was_updated) == (bid, True)
+    assert _sources(conn, bid) == [str(b)]
+    assert "revised" in _doc(conn, bid)[1]
+    assert _tags(conn, bid) == ["important"]
+    assert _sources(conn, ra.doc_id) == [str(a)]
+
+
 def test_failed_extract_leaves_doc_untouched(cfg, conn, tmp_path, fake_embed):
     a = _write(tmp_path / "a.md", ORIGINAL)
     r1 = ingest_file(a, conn, cfg)

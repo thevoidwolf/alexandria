@@ -141,16 +141,22 @@ def _lookup_by_source(
     return row[0] if row else None
 
 
-def _is_primary_source(
-    conn: sqlite3.Connection, doc_id: str, source_kind: str, source_uri: str
+def _edit_updates_owner(
+    conn: sqlite3.Connection,
+    doc_id: str,
+    source_kind: str,
+    source_uri: str,
+    raw_sha: str,
 ) -> bool:
-    """Whether edits at this source of ``doc_id`` update the doc in place.
+    """Whether new bytes ``raw_sha`` at this source of ``doc_id`` update it in place.
 
     A doc whose content sits at several sources (a note and its copy)
-    belongs to its oldest source that still exists, so editing the copy
-    can't take over the original's id, category and tags. A ``file`` whose
-    path is gone doesn't count; other kinds can't be checked and always
-    do, as does the source being ingested.
+    belongs to its primary source, the oldest one that still exists, so
+    editing the copy can't take over the original's id, category and tags.
+    A ``file`` whose path is gone doesn't count; other kinds can't be
+    checked and always do, as does the source being ingested. If the
+    primary file already holds the same new bytes, both got the same edit
+    and the doc follows it.
     """
     for kind, uri in conn.execute(
         "SELECT source_kind, source_uri FROM document_sources "
@@ -159,7 +165,13 @@ def _is_primary_source(
     ).fetchall():
         if (kind, uri) == (source_kind, source_uri):
             return True
-        if kind != "file" or Path(uri).exists():
+        if kind != "file":
+            return False
+        try:
+            return sha256_bytes(Path(uri).read_bytes()) == raw_sha
+        except FileNotFoundError:
+            continue
+        except OSError:
             return False
     return True
 
@@ -301,7 +313,7 @@ def _resolve(
                 conn.execute("ROLLBACK")
                 raise
             return dup(other, gate)
-        if _is_primary_source(conn, owner, kind, uri):
+        if _edit_updates_owner(conn, owner, kind, uri, raw_sha):
             return owner
         # An edited copy of the owner's primary source: it becomes its own
         # document and the owner keeps its content, id, category and tags.

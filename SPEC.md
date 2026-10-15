@@ -92,7 +92,7 @@ For every ingest the first matching rule wins.
 
 After an update the document has exactly one source: the one the new content came from. Other sources are detached, since they still hold the old content and would otherwise make every sweep flip the document between files. A detached file is ingested as its own document on the next sweep.
 
-A document found at several sources (a note and a copy of it) follows only its *primary* source: the oldest one that still exists (a file whose path is gone doesn't count). New content at any other source splits that source off into a document of its own (or onto an existing document it duplicates), detaching it in the same transaction, so an edited copy never takes over the original's id, category and tags. If the original file is gone, the copy is the primary source and updates the document in place.
+A document found at several sources (a note and a copy of it) follows only its *primary* source: the oldest one that still exists (a file whose path is gone doesn't count). New content at any other source splits that source off into a document of its own (or onto an existing document it duplicates), detaching it in the same transaction, so an edited copy never takes over the original's id, category and tags. If the original file is gone, the copy is the primary source and updates the document in place. If the original file already holds the same new bytes (both got the same edit, e.g. mirrored folders), the copy also updates the document in place, whichever of the two is ingested first.
 
 Near-duplicate detection (MinHash/simhash) is explicitly **out of scope for v1**.
 
