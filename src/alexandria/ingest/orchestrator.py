@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sqlite3
-import struct
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,6 +14,8 @@ from alexandria.ingest.embed import embed_texts
 from alexandria.ingest.extract import detect_content_type, extract
 from alexandria.ingest.fetch import Fetched, fetch_file, fetch_url
 from alexandria.ingest.hash import sha256_bytes, sha256_text
+from alexandria.ingest.store import delete_chunks, insert_chunks  # noqa: F401
+from alexandria.originals import blob_path
 
 
 @dataclass
@@ -31,22 +32,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _blob_path(cfg: Config, sha: str) -> Path:
-    return cfg.blobs_dir / sha[:2] / sha
-
-
 def _write_blob(cfg: Config, sha: str, data: bytes) -> None:
     if not cfg.storage.keep_blobs:
         return
-    p = _blob_path(cfg, sha)
+    p = blob_path(cfg, sha)
     p.parent.mkdir(parents=True, exist_ok=True)
     if not p.exists():
         p.write_bytes(data)
-
-
-def _serialize_vec(vec) -> bytes:
-    # sqlite-vec accepts raw packed float32 bytes for vec0 columns
-    return struct.pack(f"{len(vec)}f", *vec.tolist())
 
 
 def _record_source(
@@ -216,21 +208,7 @@ def ingest_fetched(
                 (doc_id, ex.title or "", ex.text),
             )
 
-            for c, vec in zip(chunks, embeddings, strict=True):
-                chunk_id = str(ULID())
-                cur = conn.execute(
-                    "INSERT INTO chunks(id, doc_id, ord, start_char, end_char, text) VALUES (?, ?, ?, ?, ?, ?)",
-                    (chunk_id, doc_id, c.ord, c.start_char, c.end_char, c.text),
-                )
-                rowid = cur.lastrowid
-                conn.execute(
-                    "INSERT INTO chunks_fts(rowid, chunk_id, doc_id, text) VALUES (?, ?, ?, ?)",
-                    (rowid, chunk_id, doc_id, c.text),
-                )
-                conn.execute(
-                    "INSERT INTO chunks_vec(chunk_rowid, embedding) VALUES (?, ?)",
-                    (rowid, _serialize_vec(vec)),
-                )
+            insert_chunks(conn, doc_id, chunks, embeddings)
 
             conn.execute("COMMIT")
         except Exception:
