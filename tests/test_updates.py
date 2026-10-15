@@ -1,4 +1,5 @@
-"""Changed content at a known file/URL source updates that document in place."""
+"""Changed content at a known file/URL source updates that document in place,
+and content from any source replaces a document named by ``target_doc_id``."""
 from __future__ import annotations
 
 import dataclasses
@@ -6,11 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from alexandria.ingest import ingest_file
+from alexandria.ingest import (
+    ContentConflict,
+    DocumentNotFound,
+    SourceConflict,
+    ingest_file,
+)
 from alexandria.ingest.fetch import Fetched
 from alexandria.ingest.hash import sha256_bytes
 from alexandria.ingest.orchestrator import ingest_fetched
-from alexandria.originals import blob_path
+from alexandria.originals import blob_path, lookup_blob_for
 from alexandria.search import search
 
 ORIGINAL = "# A\n\nalpha wolves\n"
@@ -283,3 +289,153 @@ def test_upload_same_bytes_is_raw_duplicate(cfg, conn, fake_embed):
 
     assert r2.was_duplicate is True
     assert r2.dedup_gate == "raw"
+
+
+def test_explicit_update_from_new_path(cfg, conn, tmp_path, fake_embed):
+    a = _write(tmp_path / "a.md", ORIGINAL)
+    b = _write(tmp_path / "b.md", "# B\n\ngamma owls\n")
+    ra = ingest_file(a, conn, cfg)
+
+    r = ingest_file(b, conn, cfg, target_doc_id=ra.doc_id)
+
+    assert r.was_updated is True
+    assert r.was_duplicate is False
+    assert r.doc_id == ra.doc_id
+    assert _count(conn, "SELECT COUNT(*) FROM documents") == 1
+    assert _sources(conn, ra.doc_id) == [str(b)]
+    assert "gamma owls" in _doc(conn, ra.doc_id)[1]
+    assert "alpha wolves" not in _doc(conn, ra.doc_id)[1]
+
+
+def test_explicit_update_with_category_replaces_it(cfg, conn, tmp_path, fake_embed):
+    a = _write(tmp_path / "a.md", ORIGINAL)
+    b = _write(tmp_path / "b.md", "# B\n\ngamma owls\n")
+    ra = ingest_file(a, conn, cfg, category="notes")
+
+    r = ingest_file(b, conn, cfg, category="archive", target_doc_id=ra.doc_id)
+
+    assert r.was_updated is True
+    assert _doc(conn, ra.doc_id)[2] == "archive"
+
+
+def test_explicit_update_unchanged_content(cfg, conn, tmp_path, fake_embed):
+    a = _write(tmp_path / "a.md", ORIGINAL)
+    c = _write(tmp_path / "c.md", ORIGINAL)
+    ra = ingest_file(a, conn, cfg, category="notes")
+
+    r = ingest_file(c, conn, cfg, category="archive", target_doc_id=ra.doc_id)
+
+    assert r.was_duplicate is True
+    assert r.dedup_gate == "raw"
+    assert r.was_updated is False
+    assert r.doc_id == ra.doc_id
+    assert _sources(conn, ra.doc_id) == sorted([str(a), str(c)])
+    assert _doc(conn, ra.doc_id)[2] == "notes"
+
+
+def test_explicit_update_text_identical_keeps_target_bytes(
+    cfg, conn, tmp_path, fake_embed
+):
+    a = _write(tmp_path / "a.md", ORIGINAL)
+    c = tmp_path / "c.md"
+    c.write_bytes(ORIGINAL.replace("\n", "\r\n").encode())
+    ra = ingest_file(a, conn, cfg)
+    raw_before = _doc(conn, ra.doc_id)[0]
+
+    r = ingest_file(c, conn, cfg, target_doc_id=ra.doc_id)
+
+    assert (r.was_duplicate, r.dedup_gate, r.doc_id) == (True, "text", ra.doc_id)
+    assert _doc(conn, ra.doc_id)[0] == raw_before
+    assert _sources(conn, ra.doc_id) == sorted([str(a), str(c)])
+
+
+def test_explicit_update_conflicting_content_refused(cfg, conn, tmp_path, fake_embed):
+    a = _write(tmp_path / "a.md", ORIGINAL)
+    b = _write(tmp_path / "b.md", "# B\n\ngamma owls\n")
+    ra = ingest_file(a, conn, cfg)
+    rb = ingest_file(b, conn, cfg)
+    c = tmp_path / "c.md"
+    c.write_bytes(b.read_bytes())
+
+    def snapshot():
+        return (
+            _doc(conn, ra.doc_id), _doc(conn, rb.doc_id),
+            _sources(conn, ra.doc_id), _sources(conn, rb.doc_id),
+            _count(conn, "SELECT COUNT(*) FROM documents"),
+            _count(conn, "SELECT COUNT(*) FROM chunks"),
+            _count(conn, "SELECT COUNT(*) FROM document_sources"),
+        )
+
+    before = snapshot()
+    with pytest.raises(ContentConflict) as exc:
+        ingest_file(c, conn, cfg, target_doc_id=ra.doc_id)
+
+    assert exc.value.doc_id == rb.doc_id
+    assert str(exc.value) == f"this content is already stored as document {rb.doc_id}"
+    assert snapshot() == before
+
+
+def test_explicit_update_unknown_doc_refused(cfg, conn, tmp_path, fake_embed):
+    a = _write(tmp_path / "a.md", ORIGINAL)
+
+    with pytest.raises(DocumentNotFound) as exc:
+        ingest_file(a, conn, cfg, target_doc_id="nope")
+
+    assert exc.value.doc_id == "nope"
+    assert str(exc.value) == "document nope not found"
+    assert _count(conn, "SELECT COUNT(*) FROM documents") == 0
+    assert _count(conn, "SELECT COUNT(*) FROM document_sources") == 0
+
+
+def test_explicit_update_source_owned_by_other_doc_refused(
+    cfg, conn, tmp_path, fake_embed
+):
+    a = _write(tmp_path / "a.md", ORIGINAL)
+    b = _write(tmp_path / "b.md", "# B\n\ngamma owls\n")
+    ra = ingest_file(a, conn, cfg)
+    rb = ingest_file(b, conn, cfg)
+
+    def snapshot():
+        return (
+            _doc(conn, ra.doc_id), _doc(conn, rb.doc_id),
+            _sources(conn, ra.doc_id), _sources(conn, rb.doc_id),
+            _count(conn, "SELECT COUNT(*) FROM documents"),
+            _count(conn, "SELECT COUNT(*) FROM chunks"),
+        )
+
+    before = snapshot()
+    _append(b, "\nbeta ravens\n")
+    with pytest.raises(SourceConflict) as exc:
+        ingest_file(b, conn, cfg, target_doc_id=ra.doc_id)
+
+    assert exc.value.doc_id == rb.doc_id
+    assert str(exc.value) == f"this source already belongs to document {rb.doc_id}"
+    assert snapshot() == before
+
+
+def test_explicit_upload_filename_shared_with_other_doc_is_not_a_conflict(
+    cfg, conn, tmp_path, fake_embed
+):
+    ingest_fetched(Fetched(b"first notes", "upload", "upload:notes.md"), conn, cfg)
+    b = _write(tmp_path / "b.md", "# B\n\ngamma owls\n")
+    rb = ingest_file(b, conn, cfg)
+
+    r = ingest_fetched(
+        Fetched(b"second notes", "upload", "upload:notes.md"), conn, cfg,
+        target_doc_id=rb.doc_id,
+    )
+
+    assert r.was_updated is True
+    assert r.doc_id == rb.doc_id
+
+
+def test_explicit_update_can_change_format(cfg, conn, tmp_path, fake_embed):
+    a = _write(tmp_path / "a.md", ORIGINAL)
+    d = _write(tmp_path / "d.txt", "plain delta text\n")
+    ra = ingest_file(a, conn, cfg)
+
+    r = ingest_file(d, conn, cfg, target_doc_id=ra.doc_id)
+
+    assert r.content_type == "txt"
+    sha, ctype, _ = lookup_blob_for(conn, ra.doc_id)
+    assert (sha, ctype) == (sha256_bytes(d.read_bytes()), "txt")

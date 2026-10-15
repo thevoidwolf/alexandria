@@ -22,6 +22,40 @@ from alexandria.originals import blob_path
 IDENTITY_KINDS = frozenset({"file", "url"})
 
 
+class UpdateRefused(Exception):
+    """An explicit update (``target_doc_id``) was refused; nothing changed.
+
+    ``doc_id`` names the document the refusal is about.
+    """
+
+    def __init__(self, doc_id: str, message: str) -> None:
+        super().__init__(message)
+        self.doc_id = doc_id
+
+
+class DocumentNotFound(UpdateRefused):
+    def __init__(self, doc_id: str) -> None:
+        super().__init__(doc_id, f"document {doc_id} not found")
+
+
+class ContentConflict(UpdateRefused):
+    """The new content is already another document's."""
+
+    def __init__(self, doc_id: str) -> None:
+        super().__init__(
+            doc_id, f"this content is already stored as document {doc_id}"
+        )
+
+
+class SourceConflict(UpdateRefused):
+    """The new file/url source is another document's identity."""
+
+    def __init__(self, doc_id: str) -> None:
+        super().__init__(
+            doc_id, f"this source already belongs to document {doc_id}"
+        )
+
+
 @dataclass
 class IngestResult:
     doc_id: str
@@ -136,12 +170,15 @@ def _resolve(
     title: str | None,
     ctype: str,
     cfg: Config,
+    target_doc_id: str | None = None,
 ) -> IngestResult | str | None:
     """Decide what ingesting ``fetched`` does to the store.
 
     Returns a duplicate ``IngestResult`` (its side effects already applied),
     the id of a document to update in place, or ``None`` to insert a new one.
     ``text_sha=None`` (before extraction) skips every text comparison.
+    With ``target_doc_id`` the answer is that document or a duplicate of it;
+    an ``UpdateRefused`` is raised before anything is written otherwise.
     Call under the DB lock: a text duplicate may swap the doc's blob after
     its own COMMIT.
     """
@@ -149,6 +186,31 @@ def _resolve(
 
     def dup(doc_id: str, gate: str) -> IngestResult:
         return IngestResult(doc_id, True, gate, title, ctype, 0)
+
+    if target_doc_id is not None:
+        row = conn.execute(
+            "SELECT sha256_raw, sha256_text FROM documents WHERE id = ?",
+            (target_doc_id,),
+        ).fetchone()
+        if row is None:
+            raise DocumentNotFound(target_doc_id)
+        target_raw, target_text = row
+        if (
+            kind in IDENTITY_KINDS
+            and (owner := _lookup_by_source(conn, kind, uri))
+            and owner != target_doc_id
+        ):
+            raise SourceConflict(owner)
+        if raw_sha == target_raw or (text_sha and text_sha == target_text):
+            # Nothing to replace: just remember where this copy came from.
+            _record_source(conn, target_doc_id, kind, uri)
+            _add_tags(conn, target_doc_id, tags)
+            return dup(target_doc_id, "raw" if raw_sha == target_raw else "text")
+        if (other := _lookup_by_raw(conn, raw_sha)) or (
+            text_sha and (other := _lookup_by_text(conn, text_sha))
+        ):
+            raise ContentConflict(other)
+        return target_doc_id
 
     if kind in IDENTITY_KINDS and (owner := _lookup_by_source(conn, kind, uri)):
         owner_raw, owner_text = conn.execute(
@@ -278,11 +340,18 @@ def ingest_fetched(
     tags: list[str] | None = None,
     filename_hint: str | None = None,
     lock: AbstractContextManager = nullcontext(),
+    target_doc_id: str | None = None,
 ) -> IngestResult:
     """Dedup, extract, chunk, embed and store one fetched document.
 
     New content at a known ``file``/``url`` source updates that document in
     place (same id, tags and category; ``category`` is ignored then).
+
+    ``target_doc_id`` names the document ``fetched`` replaces, whatever its
+    source; a ``category`` passed then replaces the doc's. Raises
+    ``DocumentNotFound`` if it doesn't exist (or is deleted mid-ingest),
+    ``SourceConflict`` if a ``file``/``url`` source belongs to another doc
+    and ``ContentConflict`` if another doc already holds the content.
 
     ``lock`` guards ``conn``. It is held only around the DB phases, never
     across extraction or embedding (which can take minutes for a large PDF
@@ -294,7 +363,9 @@ def ingest_fetched(
     raw_sha = sha256_bytes(fetched.data)
 
     with lock:
-        target = _resolve(conn, fetched, raw_sha, None, tags, None, "", cfg)
+        target = _resolve(
+            conn, fetched, raw_sha, None, tags, None, "", cfg, target_doc_id
+        )
     if isinstance(target, IngestResult):
         return target
 
@@ -318,7 +389,10 @@ def ingest_fetched(
 
     text_sha = sha256_text(ex.text)
     with lock:
-        target = _resolve(conn, fetched, raw_sha, text_sha, tags, ex.title, ctype, cfg)
+        target = _resolve(
+            conn, fetched, raw_sha, text_sha, tags, ex.title, ctype, cfg,
+            target_doc_id,
+        )
     if isinstance(target, IngestResult):
         return target
 
@@ -330,15 +404,20 @@ def ingest_fetched(
     now = _now()
 
     with lock:
-        # Another ingest may have stored or changed this content while we
-        # were extracting/embedding without the lock.
-        target = _resolve(conn, fetched, raw_sha, text_sha, tags, ex.title, ctype, cfg)
+        # Another ingest may have stored or changed this content (or
+        # deleted the target) while we were extracting/embedding without
+        # the lock.
+        target = _resolve(
+            conn, fetched, raw_sha, text_sha, tags, ex.title, ctype, cfg,
+            target_doc_id,
+        )
         if isinstance(target, IngestResult):
             return target
         if target is not None:
             old_raw = _apply_update(
                 conn, target, fetched, raw_sha, text_sha, ex, ctype, chunks,
-                embeddings, tags, None, cfg,
+                embeddings, tags, category=category if target_doc_id else None,
+                cfg=cfg,
             )
             # Under the lock, after COMMIT, like the insert path below.
             _replace_blob(cfg, old_raw, raw_sha, fetched.data)
@@ -401,9 +480,13 @@ def ingest_file(
     category: str | None = None,
     tags: list[str] | None = None,
     lock: AbstractContextManager = nullcontext(),
+    target_doc_id: str | None = None,
 ) -> IngestResult:
     fetched = fetch_file(path)
-    return ingest_fetched(fetched, conn, cfg, category=category, tags=tags, lock=lock)
+    return ingest_fetched(
+        fetched, conn, cfg, category=category, tags=tags, lock=lock,
+        target_doc_id=target_doc_id,
+    )
 
 
 def ingest_url(
