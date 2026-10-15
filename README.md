@@ -277,7 +277,7 @@ MCP client side — the MCP bearer token and the web password are independent.
 - **`/documents/{id}`** — full metadata, sources, tags, and a lazy-loaded
   "Show extracted text" panel, plus an **Upload new version** button that
   replaces the document's content with a new file (same id, category and tags
-  kept; optional category/tags to apply).
+  kept).
 
 ![Document browser: filter by category and tags, with type, size, and ingest time per row](docs/screenshots/documents.png)
 
@@ -399,7 +399,9 @@ pypdf on that document so ingest stays robust.
 
 Three cheap layers, always run, in this order:
 
-1. **Source** — same `(source_kind, source_uri)` was ingested before.
+1. **Source** — the same file path or URL was ingested before (uploads and
+   Claude notes are matched by content only). Unchanged content there is a
+   duplicate; changed content updates that document instead (see below).
 2. **Raw bytes** — `sha256(bytes)` matches an existing document.
 3. **Normalized text** — `sha256(normalized_text)` matches (catches re-exported
    PDFs, mirrored HTML, format conversions).
@@ -413,6 +415,10 @@ merges any new tags. Near-duplicate detection (MinHash/simhash) is not implement
   seen before updates that document in place: same id, tags kept (and merged
   with any new ones), category untouched. A whitespace-only change counts as a
   duplicate, not an update.
+- **Copies** — a document found at several paths (a note and a copy of it)
+  follows the oldest one that still exists. An edited copy becomes its own
+  document and the original keeps its id, category and tags; if the original
+  file is gone, the copy takes over the document.
 - **Different path** — name the document to replace: `alexandria ingest new.md
   --replaces <doc_id>`, the **Upload new version** button on the document page,
   or `doc_id` on `store_document_tool`. An explicit update may also set a new

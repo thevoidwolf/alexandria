@@ -78,7 +78,7 @@ A duplicate hit returns the existing `doc_id`, updates `last_seen_at`, appends t
 For every ingest the first matching rule wins.
 
 1. **Explicit target** (`doc_id` / `--replaces` / "Upload new version"). Unknown target → `DocumentNotFound`. New source already belongs to a different doc → `SourceConflict`. Same bytes or same normalized text as the target → unchanged duplicate (`dedup_gate` `raw`/`text`). Same bytes or text as a *different* doc → `ContentConflict`. Otherwise the target is updated in place. A refused update changes nothing.
-2. **No target, known `file`/`url` source.** Same bytes → duplicate (`dedup_gate="source"`). Same normalized text (e.g. a CRLF or whitespace-only change) → duplicate (`"text"`). Otherwise the source's document is updated in place: same id, tags kept and merged, category untouched (the sweep always passes a category; it must not undo a manual recategorization). If the new content exactly matches a *different* document, the source is moved to that document and reported as a duplicate; the old document is kept even if it ends up with no sources.
+2. **No target, known `file`/`url` source.** Same bytes → duplicate (`dedup_gate="source"`). Same normalized text (e.g. a CRLF or whitespace-only change) → duplicate (`"text"`). Otherwise the source's document is updated in place (if this is its primary source, see *Sources on update*): same id, tags kept and merged, category untouched (the sweep always passes a category; it must not undo a manual recategorization). If the new content exactly matches a *different* document, the source is moved to that document and reported as a duplicate; the old document is kept even if it ends up with no sources.
 3. **No target, unknown source — and always for `upload`/`mcp` sources.** Raw-bytes gate → duplicate; normalized-text gate → duplicate; else a new document. Uploads and Claude-authored notes carry only a filename, so they never match by source.
 
 ### What an update keeps and replaces
@@ -91,6 +91,8 @@ For every ingest the first matching rule wins.
 ### Sources on update
 
 After an update the document has exactly one source: the one the new content came from. Other sources are detached, since they still hold the old content and would otherwise make every sweep flip the document between files. A detached file is ingested as its own document on the next sweep.
+
+A document found at several sources (a note and a copy of it) follows only its *primary* source: the oldest one that still exists (a file whose path is gone doesn't count). New content at any other source splits that source off into a document of its own (or onto an existing document it duplicates), detaching it in the same transaction, so an edited copy never takes over the original's id, category and tags. If the original file is gone, the copy is the primary source and updates the document in place.
 
 Near-duplicate detection (MinHash/simhash) is explicitly **out of scope for v1**.
 
