@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from stat import S_ISREG
 
 from ulid import ULID
 
@@ -79,6 +81,19 @@ class _NewDoc:
     detach_from: str | None = None
 
 
+@dataclass(frozen=True)
+class _Update:
+    """``_resolve``'s answer when ``doc_id`` is updated in place.
+
+    ``keep`` names another ``(source_kind, source_uri)`` of the doc that
+    already holds the new bytes (a note and its copy got the same edit);
+    it stays attached in its current row so it remains the primary source.
+    """
+
+    doc_id: str
+    keep: tuple[str, str] | None = None
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -141,39 +156,42 @@ def _lookup_by_source(
     return row[0] if row else None
 
 
-def _edit_updates_owner(
-    conn: sqlite3.Connection,
-    doc_id: str,
-    source_kind: str,
-    source_uri: str,
-    raw_sha: str,
-) -> bool:
-    """Whether new bytes ``raw_sha`` at this source of ``doc_id`` update it in place.
+def _update_for_edit(
+    conn: sqlite3.Connection, doc_id: str, fetched: Fetched, raw_sha: str
+) -> _Update | None:
+    """How new bytes at a source of ``doc_id`` update it, or None to split off.
 
     A doc whose content sits at several sources (a note and its copy)
     belongs to its primary source, the oldest one that still exists, so
     editing the copy can't take over the original's id, category and tags.
     A ``file`` whose path is gone doesn't count; other kinds can't be
     checked and always do, as does the source being ingested. If the
-    primary file already holds the same new bytes, both got the same edit
-    and the doc follows it.
+    primary file already holds the same new bytes, both got the same edit:
+    the doc follows it and the primary keeps its place.
     """
     for kind, uri in conn.execute(
         "SELECT source_kind, source_uri FROM document_sources "
         "WHERE doc_id = ? ORDER BY rowid",
         (doc_id,),
     ).fetchall():
-        if (kind, uri) == (source_kind, source_uri):
-            return True
+        if (kind, uri) == (fetched.source_kind, fetched.source_uri):
+            return _Update(doc_id)
         if kind != "file":
-            return False
+            return None
+        path = Path(uri)
         try:
-            return sha256_bytes(Path(uri).read_bytes()) == raw_sha
-        except FileNotFoundError:
-            continue
+            if not path.exists():
+                continue
+            # Under the DB lock: only hash a regular file of the right size.
+            st = path.stat()
+            if not S_ISREG(st.st_mode) or st.st_size != len(fetched.data):
+                return None
+            with path.open("rb") as f:
+                same = hashlib.file_digest(f, "sha256").hexdigest() == raw_sha
         except OSError:
-            return False
-    return True
+            return None
+        return _Update(doc_id, keep=(kind, uri)) if same else None
+    return _Update(doc_id)
 
 
 def _lookup_by_raw(conn: sqlite3.Connection, sha: str) -> str | None:
@@ -228,12 +246,12 @@ def _resolve(
     ctype: str,
     cfg: Config,
     target_doc_id: str | None = None,
-) -> IngestResult | str | _NewDoc:
+) -> IngestResult | _Update | _NewDoc:
     """Decide what ingesting ``fetched`` does to the store.
 
     Returns a duplicate ``IngestResult`` (its side effects already applied),
-    the id of a document to update in place, or a ``_NewDoc`` to insert a
-    new one. Updates and new docs write nothing here, so the answer may
+    an ``_Update`` naming the document to update in place, or a ``_NewDoc``
+    to insert a new one. Updates and new docs write nothing here, so the answer may
     change between calls; the caller acts only on the final one.
     ``text_sha=None`` (before extraction) skips every text comparison.
     With ``target_doc_id`` the answer is that document or a duplicate of it;
@@ -269,7 +287,7 @@ def _resolve(
             text_sha and (other := _lookup_by_text(conn, text_sha))
         ):
             raise ContentConflict(other)
-        return target_doc_id
+        return _Update(target_doc_id)
 
     if kind in IDENTITY_KINDS and (owner := _lookup_by_source(conn, kind, uri)):
         owner_raw, owner_text = conn.execute(
@@ -313,8 +331,8 @@ def _resolve(
                 conn.execute("ROLLBACK")
                 raise
             return dup(other, gate)
-        if _edit_updates_owner(conn, owner, kind, uri, raw_sha):
-            return owner
+        if update := _update_for_edit(conn, owner, fetched, raw_sha):
+            return update
         # An edited copy of the owner's primary source: it becomes its own
         # document and the owner keeps its content, id, category and tags.
         return _NewDoc(detach_from=owner)
@@ -343,12 +361,15 @@ def _apply_update(
     tags: list[str],
     category: str | None,
     cfg: Config,
+    keep: tuple[str, str] | None = None,
 ) -> str:
     """Replace ``doc_id``'s content with ``fetched``, keeping id, tags and category.
 
     ``category=None`` leaves the category untouched. The fetched source
     becomes the doc's only source: aliases that pointed at the old bytes no
-    longer describe it. Returns the doc's previous ``sha256_raw``.
+    longer describe it. ``keep`` names one more source that already holds
+    the new bytes; it stays in its row (and so stays primary). Returns the
+    doc's previous ``sha256_raw``.
     """
     now = _now()
     conn.execute("BEGIN")
@@ -382,7 +403,14 @@ def _apply_update(
             (doc_id, ex.title or "", ex.text),
         )
         insert_chunks(conn, doc_id, chunks, embeddings)
-        conn.execute("DELETE FROM document_sources WHERE doc_id = ?", (doc_id,))
+        if keep:
+            conn.execute(
+                "DELETE FROM document_sources WHERE doc_id = ? "
+                "AND NOT (source_kind = ? AND source_uri = ?)",
+                (doc_id, *keep),
+            )
+        else:
+            conn.execute("DELETE FROM document_sources WHERE doc_id = ?", (doc_id,))
         conn.execute(
             "INSERT INTO document_sources(doc_id, source_kind, source_uri, seen_at) VALUES (?, ?, ?, ?)",
             (doc_id, fetched.source_kind, fetched.source_uri, now),
@@ -409,8 +437,9 @@ def ingest_fetched(
 
     New content at a known ``file``/``url`` source updates that document in
     place (same id, tags and category; ``category`` is ignored then), unless
-    the source is a copy of the doc's older, still-existing source: then it
-    becomes a new document and is detached from the old one.
+    the source is a copy of the doc's older, still-existing source holding
+    different bytes: then it becomes a new document and is detached from
+    the old one.
 
     ``target_doc_id`` names the document ``fetched`` replaces, whatever its
     source; a ``category`` passed then replaces the doc's. Raises
@@ -478,16 +507,18 @@ def ingest_fetched(
         )
         if isinstance(target, IngestResult):
             return target
-        if isinstance(target, str):
+        if isinstance(target, _Update):
             old_raw = _apply_update(
-                conn, target, fetched, raw_sha, text_sha, ex, ctype, chunks,
-                embeddings, tags, category=category if target_doc_id else None,
-                cfg=cfg,
+                conn, target.doc_id, fetched, raw_sha, text_sha, ex, ctype,
+                chunks, embeddings, tags,
+                category=category if target_doc_id else None, cfg=cfg,
+                keep=target.keep,
             )
             # Under the lock, after COMMIT, like the insert path below.
             _replace_blob(cfg, old_raw, raw_sha, fetched.data)
             return IngestResult(
-                target, False, None, ex.title, ctype, len(chunks), was_updated=True
+                target.doc_id, False, None, ex.title, ctype, len(chunks),
+                was_updated=True,
             )
 
         conn.execute("BEGIN")

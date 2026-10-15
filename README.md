@@ -357,7 +357,7 @@ delete_tag_tool(name)                     → {"affected": N}
 
 ```sh
 uv sync                           # dev deps included in `dev` group
-uv run pytest                     # 387 passing (+1 GPU-gated), ~20 s
+uv run pytest                     # 390 passing (+1 GPU-gated), ~20 s
 uv run ruff check src tests
 ```
 
