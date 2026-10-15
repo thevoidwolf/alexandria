@@ -65,3 +65,17 @@ def test_walker_no_recursion_ignores_subdirs(
     from alexandria.ingest.walker import _iter_paths
     shallow = _iter_paths(corpus_dir, recursive=False, glob=None)
     assert not any(p.name == "deep.txt" for p in shallow)
+
+
+def test_walker_reports_updated_files(cfg, conn, corpus_dir: Path, fake_embed):
+    ingest_folder(corpus_dir, conn, cfg)
+    note = corpus_dir / "note.md"
+    note.write_text(note.read_text() + "\n\nAn added paragraph of new content.\n")
+    result = ingest_folder(corpus_dir, conn, cfg)
+    doc_id = conn.execute(
+        "SELECT doc_id FROM document_sources WHERE source_uri LIKE ?",
+        ("%note.md",),
+    ).fetchone()[0]
+    assert len(result.updated) == 1
+    assert result.updated[0] == doc_id
+    assert len(result.ingested) == 0
