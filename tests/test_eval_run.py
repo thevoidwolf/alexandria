@@ -96,3 +96,23 @@ def test_main_writes_rows_and_summary(tiny, tmp_path, fake_embed, monkeypatch):
     summary = json.loads((out / "tiny" / "summary.json").read_text())
     assert set(summary["variants"]) == {"fts", "hybrid"}
     assert summary["variants"]["hybrid"]["index"]["n_docs"] == 2
+
+
+def test_main_records_the_environment_from_before_the_run(tiny, tmp_path, fake_embed, monkeypatch):
+    # A commit made while a long run is going must not be credited with its results.
+    head = {"alexandria_commit": "start"}
+    real_run_variant = ev_run.run_variant
+
+    def run_then_commit(*a, **kw):
+        rows = real_run_variant(*a, **kw)
+        head["alexandria_commit"] = "committed mid-run"
+        return rows
+
+    monkeypatch.setattr(ev_run, "environment", lambda: dict(head))
+    monkeypatch.setattr(ev_run, "run_variant", run_then_commit)
+    monkeypatch.setitem(ev_run.DATASETS, "tiny", lambda cache_dir: tiny)
+    monkeypatch.setattr(ev_run, "resolve", lambda spec: [Variant("fts", mode="fts", index=SMALL)])
+    out = tmp_path / "results"
+    ev_run.main(["--dataset", "tiny", "--out", str(out), "--cache", str(tmp_path / "cache")])
+    summary = json.loads((out / "tiny" / "summary.json").read_text())
+    assert summary["environment"] == {"alexandria_commit": "start"}

@@ -127,7 +127,12 @@ def environment() -> dict:
     }
 
 
-def summarize(ds: Dataset, rows_by_variant: dict[str, list[dict]], builds: dict[str, dict]) -> dict:
+def summarize(
+    ds: Dataset,
+    rows_by_variant: dict[str, list[dict]],
+    builds: dict[str, dict],
+    env: dict | None = None,
+) -> dict:
     variants = {}
     base_rows = {r["query_id"]: r for r in rows_by_variant.get(BASELINE, [])}
     for name, rows in rows_by_variant.items():
@@ -169,7 +174,7 @@ def summarize(ds: Dataset, rows_by_variant: dict[str, list[dict]], builds: dict[
         "n_queries": len(ds.queries),
         "baseline": BASELINE,
         "protocol": {"search_limit": SEARCH_LIMIT, "doc_k": DOC_K, "bootstrap": BOOTSTRAP},
-        "environment": environment(),
+        "environment": env if env is not None else environment(),
         "variants": variants,
     }
 
@@ -199,6 +204,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--cache", type=Path, default=REPO / "evals" / ".cache")
     args = p.parse_args(argv)
 
+    env = environment()  # before the run: a commit made during it isn't what produced it
     ds = DATASETS[args.dataset](args.cache)
     rows_by_variant: dict[str, list[dict]] = {}
     builds: dict[str, dict] = {}
@@ -213,7 +219,7 @@ def main(argv: list[str] | None = None) -> None:
                 f.write(json.dumps(r, sort_keys=True) + "\n")
         print(f"{v.name}: {len(rows)} queries", flush=True)
 
-    summary = summarize(ds, rows_by_variant, builds)
+    summary = summarize(ds, rows_by_variant, builds, env)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(format_table(summary))
 
