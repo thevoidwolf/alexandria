@@ -10,18 +10,22 @@ the failure log are in [REPORT.md](REPORT.md).
 uv sync --group eval            # pyarrow + ir-measures; not needed by Alexandria itself
 uv run python -m evals.run --dataset scifact --variants all
 uv run python -m evals.crosscheck --dataset scifact
+
+uv run python -m evals.datasets.papers          # fetch, check and pin the arXiv set
+uv run python -m evals.run --dataset papers --variants all
+uv run python -m evals.judge                    # grade pooled results (papers set)
 ```
 
-The first run downloads SciFact (about 5 MB) and builds an index from its
-5,183 abstracts, which takes a few minutes on CPU. Later runs reuse the
+The first SciFact run downloads the corpus (about 5 MB) and builds an index
+from its 5,183 abstracts, which takes a few minutes on CPU. Later runs reuse the
 index. `--variants` takes `all` or a comma-separated list (`fts,vec`).
 
 Results go to `evals/results/<dataset>/`:
 
 - `<variant>.jsonl`: one row per query: `query_id`, `variant`, `mode`,
   `n_words`, `latency_ms`, `docs` (top 10 doc ids, best first), `hits` (for
-  each of those docs, the `fts_rank`, `vec_rank` and `matched_in` of its
-  best chunk), `n_hits`/`n_fts`/`n_vec` (how many of the 100 returned chunks
+  each of those docs, its best chunk's position in the document (`chunk`),
+  `fts_rank`, `vec_rank` and `matched_in`), `n_hits`/`n_fts`/`n_vec` (how many of the 100 returned chunks
   each retriever found), and the four metrics.
 - `summary.json`: per-variant means, latency, index cost (including the
   embedding model's Hub revision), the FTS zero-hit rate, differences from
@@ -188,6 +192,99 @@ against vec's 0.895 — too few to conclude anything, but the direction
 hybrid is supposed to go. In other words, on natural-language queries
 the default install is vector search; see [REPORT.md](REPORT.md)
 prediction P1.
+
+### arXiv papers set
+
+37 public arXiv papers on agents, evals, retrieval and instruction-following,
+listed in [`data/papers/papers.tsv`](data/papers/papers.tsv) as
+`arxiv_id <TAB> label`. Each paper is ingested from its PDF through the web
+upload path, with the PDF backend pinned to `pypdf`, so text extraction is
+part of what's measured. The PDFs are fetched into `evals/.cache/papers/`
+and never committed: arXiv's default licence doesn't allow redistribution.
+
+**Fetching is checked and pinned.** `python -m evals.datasets.papers` asks
+the arXiv API (`export.arxiv.org`, one request every 3 s) about every id and
+stops, listing every problem and leaving the lock alone, if:
+
+- an id doesn't resolve on arXiv;
+- a label doesn't match its paper's title;
+- a pinned paper's title, or its PDF's sha256, no longer matches
+  [`papers.lock.json`](data/papers/papers.lock.json), which records the
+  version, exact title, authors and hash of each paper.
+
+Later fetches use the pinned versions; `--update` re-pins every paper to its
+latest version.
+
+Labels are short names, not titles, so "matches" is defined: every word of
+the label, or of a note in parentheses, appears in the title, ignoring
+case, punctuation and a few stopwords; "LLM(s)" and "RAG" may match their
+spelled-out forms; a note like "(Lewis et al.)" instead requires that author.
+A data test checks the committed set both ways: every label matches its own
+paper and no other paper's title. Matching against abstracts was tried and
+rejected, because abstracts name other benchmarks: 10 wrong pairings passed.
+
+**What extraction produces.** The default index holds 37 papers in 595
+chunks (5 to 33 per paper), built in 75 s on CPU, 18 MB. pypdf found a
+`/Title` for only 12 of the 37 PDFs, the known title-fallback issue. Search
+doesn't use titles, but `judge.py` shows the arXiv title instead. With the
+model's tokenizer the extracted text averages **1.77 tokens per word**
+(references, math and URLs tokenize badly; SciFact's abstracts average
+1.57). So 99% of the default 800-word chunks overflow bge-small's 512-token
+window, and even 300-word chunks overflow it 37.6% of the time (median 475
+tokens, 95th percentile 833); 200-word chunks overflow 8.3% of the time.
+These are one-off measurements, to be scripted with the report.
+
+#### Queries and judgements
+
+The queries are Voidwolf's. Write them, one JSON object per line, in
+`data/papers/queries.jsonl`:
+
+```json
+{"id": "q01", "text": "FormatSpread", "type": "lookup", "author": "human"}
+```
+
+- `type` is one of:
+  - `lookup`: exact names, numbers or identifiers.
+  - `paraphrase`: one paper's idea in words different from the paper's.
+  - `conceptual`: an idea across papers.
+  - `no-answer`: something the set can't answer.
+- `author` is `human`, or `llm-draft` for a query an LLM drafted. LLM-drafted
+  queries tend to reuse the source's wording, which favours keyword search,
+  so they are reported separately.
+
+A suggested mix for 50: 15 `lookup`, 15 `paraphrase`, 15 `conceptual`, 5
+`no-answer`, with lengths spread from one or two words to full sentences
+(the AND-versus-OR comparison and the zero-hit-by-length analysis need both).
+Write them before looking at what search returns for them.
+
+Judgements live in `data/papers/qrels.tsv` (`query_id <TAB> arxiv_id <TAB>
+grade`), written by `judge.py`:
+
+1. `uv run python -m evals.run --dataset papers --variants all` runs every
+   variant, so there is something to pool. Its scores are blank until
+   there are judgements.
+2. `uv run python -m evals.judge` pools each query's top 10 papers from
+   every variant run so far and shuffles them. For each unjudged pair it
+   shows the query, the paper's title and the retrieved passage (`m` for
+   the whole passage), never the variant or rank. Grade 2 if the paper is
+   what the query is looking for, 1 if it addresses the query, 0 if not:
+   the grade is for the paper, and the passage is evidence. Every grade is
+   saved as it's given, so quit (`q`) whenever; the next session resumes.
+3. Run `evals.run` again to score.
+
+When phase 4 adds variants, steps 1–3 repeat and only the new pairs are
+asked. Results from an index other than the current one are refused,
+because their passages would be wrong. With the three baselines, each
+query in a three-query smoke test pooled exactly 10 papers (FTS adds little
+beyond what vector search returns), so 50 queries would be about 500
+grades; every new variant adds the papers only it found.
+Papers no variant returned are never judged and count as not relevant:
+pooled judgements are biased against a retriever that finds relevant
+papers nobody else does.
+
+The loader checks both files on every run and names the line of any unknown
+type or author, duplicate id, empty query, judgement for an unknown query
+or paper, grade outside 0–2, or pair judged twice.
 
 ### Known caveats
 
