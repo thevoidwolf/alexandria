@@ -14,3 +14,7 @@ node_modules/
 
 # Local Claude Code settings (per-machine; may contain local paths)
 .claude/settings.local.json
+
+# Retrieval evals: downloaded corpora, built indexes, private runs
+evals/.cache/
+evals/private/
