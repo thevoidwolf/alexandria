@@ -46,7 +46,7 @@ def test_rows_are_keyed_by_dataset_ids(tiny, tmp_path, fake_embed):
     rows = {r["query_id"]: r for r in _run(tiny, tmp_path, mode="fts")}
     assert rows["q1"]["docs"] == ["c"]
     assert rows["q1"]["hits"] == [
-        {"doc": "c", "fts_rank": 1, "vec_rank": None, "matched_in": ["fts"]}
+        {"doc": "c", "chunk": 0, "fts_rank": 1, "vec_rank": None, "matched_in": ["fts"]}
     ]
     assert rows["q1"]["ndcg@10"] == pytest.approx(1.0)
     assert rows["q1"]["n_words"] == 2
@@ -182,3 +182,25 @@ def test_rows_from_an_unknown_run_are_not_credited_to_this_one(tiny, tmp_path, f
 
     again = _main(tiny, tmp_path, monkeypatch, [fts])
     assert again["variants"]["hybrid"]["environment"] is None
+
+
+def test_hits_record_which_chunk_of_the_doc_matched(tmp_path, fake_embed):
+    words = [f"w{i}" for i in range(90)]
+    words[70] = "zebra"                         # chunks of 50 words step 40: only chunk 1 has it
+    ds = Dataset(name="long", docs={"m": " ".join(words)}, queries={"q": "zebra"},
+                 qrels={"q": {"m": 1}})
+    rows = run_variant(ds, Variant("fts", mode="fts", index=SMALL),
+                       build_index(ds, SMALL, tmp_path / "cache"))
+    assert rows[0]["hits"] == [
+        {"doc": "m", "chunk": 1, "fts_rank": 1, "vec_rank": None, "matched_in": ["fts"]}
+    ]
+
+
+def test_table_renders_before_anything_is_judged(tiny, tmp_path, fake_embed):
+    unjudged = Dataset(name="tiny", docs=tiny.docs, queries=tiny.queries, qrels={})
+    rows = _run(unjudged, tmp_path, name="hybrid", mode="hybrid")
+    table = ev_run.format_table(summarize(unjudged, {"hybrid": rows}, {"hybrid": {}}))
+    assert "—" in table.splitlines()[-1]
+
+    empty = Dataset(name="none", docs=tiny.docs, queries={}, qrels={})
+    ev_run.format_table(summarize(empty, {"hybrid": []}, {"hybrid": {}}))

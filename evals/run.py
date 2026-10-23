@@ -64,6 +64,14 @@ def run_variant(ds: Dataset, v: Variant, built: BuiltIndex) -> list[dict]:
             first_hit = {}
             for h in hits:
                 first_hit.setdefault(canon[h.doc_id], h)
+            # A chunk's position in its document, unlike its id, is the same
+            # in every build of the index.
+            ords = {
+                d: conn.execute(
+                    "SELECT ord FROM chunks WHERE id = ?", (first_hit[d].chunk_id,)
+                ).fetchone()[0]
+                for d in docs
+            }
             rows.append({
                 "query_id": qid,
                 "variant": v.name,
@@ -74,6 +82,7 @@ def run_variant(ds: Dataset, v: Variant, built: BuiltIndex) -> list[dict]:
                 "hits": [
                     {
                         "doc": d,
+                        "chunk": ords[d],
                         "fts_rank": first_hit[d].fts_rank,
                         "vec_rank": first_hit[d].vec_rank,
                         "matched_in": list(first_hit[d].matched_in),
@@ -188,6 +197,10 @@ def summarize(
     }
 
 
+def _cell(x: float | None, spec: str, width: int) -> str:
+    return f"{'—' if x is None else format(x, spec):>{width}}"
+
+
 def format_table(summary: dict) -> str:
     head = f"{'variant':<14}{'nDCG@10':>9}{'R@5':>8}{'R@10':>8}{'MRR@10':>8}" \
            f"{'Δ nDCG@10 [95% CI]':>28}{'p50 ms':>9}{'p95 ms':>9}{'FTS 0-hit':>11}"
@@ -201,9 +214,10 @@ def format_table(summary: dict) -> str:
             delta = "baseline" if name == summary["baseline"] else "—"
         zero = v["fts_zero_hit_rate"]
         lines.append(
-            f"{name:<14}{m['ndcg@10']:>9.4f}{m['recall@5']:>8.4f}{m['recall@10']:>8.4f}"
-            f"{m['mrr@10']:>8.4f}{delta:>28}{v['latency_ms']['p50']:>9.1f}"
-            f"{v['latency_ms']['p95']:>9.1f}{'' if zero is None else f'{zero:.1%}':>11}"
+            f"{name:<14}{_cell(m['ndcg@10'], '.4f', 9)}{_cell(m['recall@5'], '.4f', 8)}"
+            f"{_cell(m['recall@10'], '.4f', 8)}{_cell(m['mrr@10'], '.4f', 8)}{delta:>28}"
+            f"{_cell(v['latency_ms']['p50'], '.1f', 9)}{_cell(v['latency_ms']['p95'], '.1f', 9)}"
+            f"{'' if zero is None else f'{zero:.1%}':>11}"
         )
     return "\n".join(lines)
 
