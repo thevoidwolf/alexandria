@@ -250,7 +250,8 @@ def search(
         return []
 
     eligible = _eligible_rowids_subquery(category, tags)
-    over_fetch = max(limit * 3, 30)
+    # Reranking needs top-N candidates, so it can widen the fetch.
+    over_fetch = max(limit * 3, 30, cfg.search.rerank_top_n if rerank else 0)
 
     fts_rows = (
         _fts_search(conn, query, eligible, over_fetch, fts_operator)

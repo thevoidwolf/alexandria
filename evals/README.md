@@ -34,7 +34,9 @@ dataset) or a comma-separated list (`fts,vec`). The variants:
 
 The first run of `hybrid+rerank` downloads the cross-encoder (about 1.1 GB),
 and the `-base` variants download bge-base (about 440 MB) and build their own
-indexes.
+indexes. When reranking, each retriever fetches at least `rerank_top_n`
+candidates, so the cross-encoder always gets its 50. At the eval's
+`limit=100` the window is already 300, so this never changes eval results.
 
 Results go to `evals/results/<dataset>/`:
 

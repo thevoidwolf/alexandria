@@ -144,3 +144,17 @@ def test_mcp_search_never_reranks_even_when_config_says_so(cfg, conn, monkeypatc
     monkeypatch.setattr(srv, "_get", lambda: (_with(cfg, rerank=True), conn))
     srv.search_tool("some query")
     assert spy_search[0].get("rerank", False) is False
+
+
+def test_rerank_top_n_is_not_capped_by_the_candidate_window(cfg, conn, tmp_path, fake_embed,
+                                                            fake_rerank):
+    # Without reranking, limit 5 fetches 30 candidates per retriever; a
+    # top-N above that must widen the fetch, not be silently cut to 30.
+    folder = tmp_path / "many"
+    folder.mkdir()
+    for i in range(45):
+        (folder / f"n{i:02d}.txt").write_text(f"note {i} about passages and queries")
+        ingest_file(folder / f"n{i:02d}.txt", conn, cfg)
+    hits = search("passages", conn, _with(cfg, rerank_top_n=40), mode="vec", limit=5, rerank=True)
+    assert len(fake_rerank[0][1]) == 40
+    assert len(hits) == 5
