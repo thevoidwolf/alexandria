@@ -16,3 +16,6 @@ class Dataset:
     doc_suffix: str = ".txt"                # filename extension each doc is ingested under
     titles: dict[str, str] = field(default_factory=dict)  # doc id -> human-readable title
     query_meta: dict[str, dict] = field(default_factory=dict)  # query id -> {type, author}
+    # True when the qrels come from pooled judging and record the papers
+    # judged not relevant too, so "unjudged" differs from "not relevant".
+    pooled: bool = False

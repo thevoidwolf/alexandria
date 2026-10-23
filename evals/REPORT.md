@@ -116,3 +116,17 @@ Recorded before any papers-set results exist.
   them. The RuLES lookup said 15 scenarios; the pinned v3 says 14. A ReAct
   lookup's placeholder became the name from the paper's worked example,
   "Arthur's Magazine was started in 1844".
+- **2026-10-23: latency is timed after an untimed pass over every query**,
+  replacing a single warm-up query. With one warm-up query, the variant run
+  first in a process was slower: on the papers set `fts` took 3.0 ms at p50
+  when run first and 0.4 ms when run last, and `vec` took 16.5 ms against
+  14.2 to 14.8 ms. All committed latencies are re-measured this way;
+  relevance results don't change.
+- **2026-10-23: the papers summary reports `judged@10`** for each variant:
+  the share of its top-10 papers that have a grade. A variant is scored
+  only after its new pairs are graded, so this should read 100% in every
+  reported result.
+- **2026-10-23: the reranker's settings.** `hybrid+rerank` uses
+  `BAAI/bge-reranker-base` on CPU over the top 50 fused chunks, the brief's
+  defaults. The cross-encoder reads at most 512 tokens of query and chunk
+  together, so it truncates long chunks, as the embedder does (P2).

@@ -358,6 +358,7 @@ def load(cache_dir: Path, data_dir: Path = DATA_DIR) -> Dataset:
         doc_suffix=".pdf",
         titles={i: lock[i]["title"] for i in labels},
         query_meta=meta,
+        pooled=True,
     )
 
 

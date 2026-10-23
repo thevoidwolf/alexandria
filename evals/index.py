@@ -68,9 +68,22 @@ def model_revision(name: str) -> str:
     first, exactly as ingest would (downloading it on a fresh machine, or
     picking up a moved ``main``), then the revision is read from the cache.
     """
+    _get_model(name, EmbeddingsConfig().device)
+    return _cached_revision(name)
+
+
+def rerank_revision(name: str) -> str:
+    """Hub commit of the cross-encoder search loads for ``name``, as for
+    :func:`model_revision`."""
+    from alexandria.rerank import _get_cross_encoder
+
+    _get_cross_encoder(name, EmbeddingsConfig().device)
+    return _cached_revision(name)
+
+
+def _cached_revision(name: str) -> str:
     from huggingface_hub import try_to_load_from_cache
 
-    _get_model(name, EmbeddingsConfig().device)
     path = try_to_load_from_cache(name, "config.json")
     return Path(path).parent.name if isinstance(path, str) else "not-from-hub"
 

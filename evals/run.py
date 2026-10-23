@@ -22,9 +22,12 @@ from pathlib import Path
 
 import numpy as np
 
+from alexandria.config import SearchConfig
 from alexandria.search import search
 from evals.datasets import Dataset, papers, scifact
-from evals.index import BuiltIndex, build_index, canonical_ids, open_index, translate_qrels
+from evals.index import (
+    BuiltIndex, build_index, canonical_ids, open_index, rerank_revision, translate_qrels,
+)
 from evals.metrics import first_unique, mrr_at_k, ndcg_at_k, paired_bootstrap, recall_at_k
 from evals.variants import BASELINE, Variant, resolve
 
@@ -46,19 +49,35 @@ def _score(docs: list[str], judged: dict[str, int]) -> dict[str, float | None]:
     }
 
 
+def search_settings(v: Variant) -> dict:
+    """The query-side settings a variant ran with, for the summary."""
+    s = SearchConfig()
+    return {
+        "rrf_k": v.rrf_k,
+        "fts_operator": v.fts_operator,
+        "query_instruction": v.query_instruction,
+        "rerank": {
+            "model": s.rerank_model, "revision": rerank_revision(s.rerank_model),
+            "top_n": s.rerank_top_n,
+        } if v.rerank else None,
+    }
+
+
 def run_variant(ds: Dataset, v: Variant, built: BuiltIndex) -> list[dict]:
-    """One row per query, in dataset order. Latency is warm: one untimed
-    query first loads the embedding model."""
+    """One row per query, in dataset order. Latency is warm: every query is
+    run once untimed first, which loads the models and warms the caches."""
     canon = canonical_ids(built.doc_map)
     qrels = translate_qrels(ds.qrels, built.doc_map)
     cfg, conn = open_index(built, query_instruction=v.query_instruction)
+    opts = {"limit": SEARCH_LIMIT, "mode": v.mode, "rrf_k": v.rrf_k,
+            "fts_operator": v.fts_operator, "rerank": v.rerank}
     rows = []
     try:
-        if ds.queries:
-            search(next(iter(ds.queries.values())), conn, cfg, limit=SEARCH_LIMIT, mode=v.mode)
+        for text in ds.queries.values():
+            search(text, conn, cfg, **opts)
         for qid, text in ds.queries.items():
             start = time.perf_counter()
-            hits = search(text, conn, cfg, limit=SEARCH_LIMIT, mode=v.mode)
+            hits = search(text, conn, cfg, **opts)
             latency_ms = (time.perf_counter() - start) * 1000
             docs = first_unique((canon[h.doc_id] for h in hits), DOC_K)
             first_hit = {}
@@ -148,10 +167,13 @@ def summarize(
     rows_by_variant: dict[str, list[dict]],
     builds: dict[str, dict],
     envs: dict[str, dict] | None = None,
+    searches: dict[str, dict | None] | None = None,
 ) -> dict:
     """``envs`` maps each variant to the environment that produced its rows
-    (variants can come from different runs); missing ones get the current one."""
+    (variants can come from different runs); missing ones get the current one.
+    ``searches`` maps each to its :func:`search_settings` (None: unknown)."""
     envs = envs or {}
+    searches = searches or {}
     variants = {}
     base_rows = {r["query_id"]: r for r in rows_by_variant.get(BASELINE, [])}
     for name, rows in rows_by_variant.items():
@@ -171,8 +193,16 @@ def summarize(
                 sum(r["n_fts"] == 0 for r in rows) / len(rows) if rows and uses_fts else None
             ),
             "index": builds.get(name, {}),
+            "search": searches.get(name),
             "environment": envs[name] if name in envs else environment(),
         }
+        if ds.pooled:
+            # Share of the top-10 documents that have a grade. Below 1, the
+            # variant's scores count its unjudged papers as not relevant.
+            shown = [(r["query_id"], d) for r in rows for d in r["docs"]]
+            entry["judged@10"] = (
+                sum(d in ds.qrels.get(q, {}) for q, d in shown) / len(shown) if shown else None
+            )
         if base_rows and name != BASELINE:
             entry["vs_baseline"] = {}
             for m in METRICS:
@@ -203,8 +233,10 @@ def _cell(x: float | None, spec: str, width: int) -> str:
 
 
 def format_table(summary: dict) -> str:
+    judged = any("judged@10" in v for v in summary["variants"].values())
     head = f"{'variant':<14}{'nDCG@10':>9}{'R@5':>8}{'R@10':>8}{'MRR@10':>8}" \
-           f"{'Δ nDCG@10 [95% CI]':>28}{'p50 ms':>9}{'p95 ms':>9}{'FTS 0-hit':>11}"
+           f"{'Δ nDCG@10 [95% CI]':>28}{'p50 ms':>9}{'p95 ms':>9}{'FTS 0-hit':>11}" \
+           + (f"{'judged@10':>11}" if judged else "")
     lines = [head, "-" * len(head)]
     for name, v in summary["variants"].items():
         m = {k: v["metrics"][k]["mean"] for k in METRICS}
@@ -219,22 +251,25 @@ def format_table(summary: dict) -> str:
             f"{_cell(m['recall@10'], '.4f', 8)}{_cell(m['mrr@10'], '.4f', 8)}{delta:>28}"
             f"{_cell(v['latency_ms']['p50'], '.1f', 9)}{_cell(v['latency_ms']['p95'], '.1f', 9)}"
             f"{'' if zero is None else f'{zero:.1%}':>11}"
+            + (_cell(v.get("judged@10"), ".1%", 11) if judged else "")
         )
     return "\n".join(lines)
 
 
-def _previous_results(out_dir: Path) -> tuple[dict, dict, dict]:
-    """Rows, build stats and environments of variants already in ``out_dir``,
-    so running a subset of variants updates the summary instead of replacing it."""
+def _previous_results(out_dir: Path) -> tuple[dict, dict, dict, dict]:
+    """Rows, build stats, environments and search settings of variants already
+    in ``out_dir``, so running a subset of variants updates the summary
+    instead of replacing it."""
     old = out_dir / "summary.json"
     old_variants = json.loads(old.read_text())["variants"] if old.exists() else {}
-    rows, builds, envs = {}, {}, {}
+    rows, builds, envs, searches = {}, {}, {}, {}
     for path in sorted(out_dir.glob("*.jsonl")):
         rows[path.stem] = [json.loads(line) for line in path.read_text().splitlines()]
         entry = old_variants.get(path.stem, {})
         builds[path.stem] = entry.get("index", {})
         envs[path.stem] = entry.get("environment")  # None: produced by an unknown run
-    return rows, builds, envs
+        searches[path.stem] = entry.get("search")
+    return rows, builds, envs, searches
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -249,17 +284,18 @@ def main(argv: list[str] | None = None) -> None:
     ds = DATASETS[args.dataset](args.cache)
     out_dir = args.out / ds.name
     out_dir.mkdir(parents=True, exist_ok=True)
-    rows_by_variant, builds, envs = _previous_results(out_dir)
-    for v in resolve(args.variants):
+    rows_by_variant, builds, envs, searches = _previous_results(out_dir)
+    for v in resolve(args.variants, ds.name):
         built = build_index(ds, v.index, args.cache)
         rows = run_variant(ds, v, built)
         rows_by_variant[v.name], builds[v.name], envs[v.name] = rows, built.stats, env
+        searches[v.name] = search_settings(v)
         with (out_dir / f"{v.name}.jsonl").open("w") as f:
             for r in rows:
                 f.write(json.dumps(r, sort_keys=True) + "\n")
         print(f"{v.name}: {len(rows)} queries", flush=True)
 
-    summary = summarize(ds, rows_by_variant, builds, envs)
+    summary = summarize(ds, rows_by_variant, builds, envs, searches)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(format_table(summary))
 

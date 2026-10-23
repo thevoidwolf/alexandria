@@ -18,7 +18,23 @@ uv run python -m evals.judge                    # grade pooled results (papers s
 
 The first SciFact run downloads the corpus (about 5 MB) and builds an index
 from its 5,183 abstracts, which takes a few minutes on CPU. Later runs reuse the
-index. `--variants` takes `all` or a comma-separated list (`fts,vec`).
+index. `--variants` takes `all` (every variant that applies to the
+dataset) or a comma-separated list (`fts,vec`). The variants:
+
+| Variant | What changes from the default install | Own index |
+|---|---|---|
+| `fts`, `vec` | keyword search only; vector search only | no |
+| `hybrid` | nothing: this is the baseline | no |
+| `hybrid+qi` | BGE's query instruction is prepended to each query | no |
+| `hybrid+rerank` | `BAAI/bge-reranker-base` re-orders the top 50 fused chunks | no |
+| `vec-base`, `hybrid-base` | `BAAI/bge-base-en-v1.5` (768 dimensions) instead of bge-small | yes |
+| `hybrid-c300`, `hybrid-c200` | 300/50- and 200/40-word chunks; papers set only | yes |
+| `hybrid-k20` | RRF k = 20 instead of 60, as a sensitivity check, not a tuning target | no |
+| `fts-or`, `hybrid-or` | FTS words joined with OR, as frozen in REPORT.md | no |
+
+The first run of `hybrid+rerank` downloads the cross-encoder (about 1.1 GB),
+and the `-base` variants download bge-base (about 440 MB) and build their own
+indexes.
 
 Results go to `evals/results/<dataset>/`:
 
@@ -29,8 +45,11 @@ Results go to `evals/results/<dataset>/`:
   each retriever found), and the four metrics.
 - `summary.json`: per-variant means, latency, index cost (including the
   embedding model's Hub revision), the FTS zero-hit rate, differences from
-  the baseline with confidence intervals, and the environment that produced
-  each variant's rows (CPU, library versions, commit). Running a subset of
+  the baseline with confidence intervals, each variant's search settings
+  (RRF k, FTS operator, query instruction, and the reranker with its Hub
+  revision), the environment that produced each variant's rows (CPU,
+  library versions, commit) and, on the papers set, `judged@10`: the share
+  of the variant's top-10 papers that have a grade. Running a subset of
   variants updates their entries and keeps the others.
 
 On the same hardware, rerunning from a fresh clone reproduces the committed
@@ -83,7 +102,7 @@ pytrec_eval: largest difference 2.2e-16 over 3,600 per-query values.
 | nDCG@10 | Headline metric, comparable with BEIR. Rewards finding relevant docs *and* ranking them high. Linear gain, log2 discount, ideal ranking cut at 10. |
 | Recall@5, Recall@10 | Share of the relevant docs that came back at all. What matters most to an agent reading the results. |
 | MRR@10 | 1 / rank of the first relevant doc (0 if none in the top 10). |
-| Latency p50 / p95 | Wall time of one `search()` call: query embedding plus both retrievers plus fusion. Warm: one untimed query first loads the model. Hardware is in `summary.json`. |
+| Latency p50 / p95 | Wall time of one `search()` call: query embedding plus both retrievers plus fusion (plus reranking for `hybrid+rerank`). Warm: every query is run once untimed first, which loads the models and warms SQLite's caches. Hardware is in `summary.json`. |
 | Index build time, DB size | The cost side. Build time is the whole ingest of the corpus. |
 
 - **A query that returns nothing scores 0.** It's a miss, not a gap, and it

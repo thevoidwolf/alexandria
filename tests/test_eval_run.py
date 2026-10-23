@@ -18,6 +18,7 @@ def _no_hub_lookup(monkeypatch):
     from evals import index as ev_index
 
     monkeypatch.setattr(ev_index, "model_revision", lambda name: "test-rev")
+    monkeypatch.setattr(ev_run, "rerank_revision", lambda name: "test-rerank-rev")
 
 
 @pytest.fixture
@@ -85,15 +86,15 @@ def test_only_non_baseline_variants_get_a_comparison(tiny, tmp_path, fake_embed)
 
 
 def test_resolve_variant_lists():
-    assert [v.name for v in resolve("all")] == ["fts", "vec", "hybrid"]
-    assert [v.name for v in resolve("vec, fts")] == ["vec", "fts"]
+    assert [v.name for v in resolve("all", "scifact")][:3] == ["fts", "vec", "hybrid"]
+    assert [v.name for v in resolve("vec, fts", "scifact")] == ["vec", "fts"]
     with pytest.raises(ValueError, match="nope"):
-        resolve("fts,nope")
+        resolve("fts,nope", "scifact")
 
 
 def test_main_writes_rows_and_summary(tiny, tmp_path, fake_embed, monkeypatch):
     monkeypatch.setitem(ev_run.DATASETS, "tiny", lambda cache_dir: tiny)
-    monkeypatch.setattr(ev_run, "resolve", lambda spec: [
+    monkeypatch.setattr(ev_run, "resolve", lambda spec, dataset: [
         Variant("fts", mode="fts", index=SMALL), Variant("hybrid", index=SMALL),
     ])
     out = tmp_path / "results"
@@ -119,7 +120,7 @@ def test_main_records_the_environment_from_before_the_run(tiny, tmp_path, fake_e
     monkeypatch.setattr(ev_run, "environment", lambda: dict(head))
     monkeypatch.setattr(ev_run, "run_variant", run_then_commit)
     monkeypatch.setitem(ev_run.DATASETS, "tiny", lambda cache_dir: tiny)
-    monkeypatch.setattr(ev_run, "resolve", lambda spec: [Variant("fts", mode="fts", index=SMALL)])
+    monkeypatch.setattr(ev_run, "resolve", lambda spec, dataset: [Variant("fts", mode="fts", index=SMALL)])
     out = tmp_path / "results"
     ev_run.main(["--dataset", "tiny", "--out", str(out), "--cache", str(tmp_path / "cache")])
     summary = json.loads((out / "tiny" / "summary.json").read_text())
@@ -128,7 +129,7 @@ def test_main_records_the_environment_from_before_the_run(tiny, tmp_path, fake_e
 
 def _main(tiny, tmp_path, monkeypatch, variants):
     monkeypatch.setitem(ev_run.DATASETS, "tiny", lambda cache_dir: tiny)
-    monkeypatch.setattr(ev_run, "resolve", lambda spec: variants)
+    monkeypatch.setattr(ev_run, "resolve", lambda spec, dataset: variants)
     out = tmp_path / "results"
     ev_run.main(["--dataset", "tiny", "--out", str(out), "--cache", str(tmp_path / "cache")])
     return json.loads((out / "tiny" / "summary.json").read_text())
@@ -209,3 +210,93 @@ def test_table_renders_before_anything_is_judged(tiny, tmp_path, fake_embed):
 def test_rows_record_the_query_text_they_were_run_with(tiny, tmp_path, fake_embed):
     rows = {r["query_id"]: r for r in _run(tiny, tmp_path, mode="fts")}
     assert rows["q1"]["query"] == "water bill"
+
+
+# ------------------------------------------------------------ phase 4
+
+def test_variant_table_is_the_planned_one():
+    from evals.variants import VARIANTS
+
+    qi = "Represent this sentence for searching relevant passages: "
+    base = IndexSettings(embed_model="BAAI/bge-base-en-v1.5", embed_dim=768)
+    assert VARIANTS == {v.name: v for v in [
+        Variant("fts", mode="fts"),
+        Variant("vec", mode="vec"),
+        Variant("hybrid"),
+        Variant("hybrid+qi", query_instruction=qi),
+        Variant("hybrid+rerank", rerank=True),
+        Variant("vec-base", mode="vec", index=base),
+        Variant("hybrid-base", index=base),
+        Variant("hybrid-c300", index=IndexSettings(chunk_tokens=300, chunk_overlap=50),
+                datasets=("papers",)),
+        Variant("hybrid-c200", index=IndexSettings(chunk_tokens=200, chunk_overlap=40),
+                datasets=("papers",)),
+        Variant("hybrid-k20", rrf_k=20),
+        Variant("fts-or", mode="fts", fts_operator="or"),
+        Variant("hybrid-or", fts_operator="or"),
+    ]}
+
+
+def test_all_means_every_variant_that_applies_to_the_dataset():
+    assert len(resolve("all", "papers")) == 12
+    scifact = [v.name for v in resolve("all", "scifact")]
+    assert len(scifact) == 10 and "hybrid-c300" not in scifact and "hybrid-c200" not in scifact
+
+
+def test_a_variant_for_another_dataset_is_refused():
+    with pytest.raises(ValueError, match="hybrid-c200.*scifact"):
+        resolve("hybrid,hybrid-c200", "scifact")
+
+
+def _spy_search(monkeypatch):
+    calls = []
+    real = ev_run.search
+
+    def spy(query, conn, cfg, **kw):
+        calls.append((query, kw, cfg.embeddings.query_instruction))
+        return real(query, conn, cfg, **kw)
+
+    monkeypatch.setattr(ev_run, "search", spy)
+    return calls
+
+
+def test_variant_options_reach_search(tiny, tmp_path, fake_embed, fake_rerank, monkeypatch):
+    calls = _spy_search(monkeypatch)
+    _run(tiny, tmp_path, rrf_k=20, fts_operator="or", rerank=True, query_instruction="find: ")
+    _, kw, instruction = calls[-1]
+    assert (kw["rrf_k"], kw["fts_operator"], kw["rerank"], instruction) == (20, "or", True, "find: ")
+    assert kw["limit"] == ev_run.SEARCH_LIMIT
+
+
+def test_every_query_is_searched_once_before_any_is_timed(tiny, tmp_path, fake_embed, monkeypatch):
+    calls = _spy_search(monkeypatch)
+    _run(tiny, tmp_path, mode="hybrid")
+    queries = list(tiny.queries.values())
+    assert [q for q, _, _ in calls] == queries + queries
+
+
+def test_judged_at_10_is_reported_for_pooled_sets_only(tiny, tmp_path, fake_embed):
+    rows = _run(tiny, tmp_path, name="hybrid")
+    n_docs = sum(len(r["docs"]) for r in rows)
+    graded = sum(d in tiny.qrels.get(r["query_id"], {}) for r in rows for d in r["docs"])
+    pooled = Dataset(**{**tiny.__dict__, "pooled": True})
+    entry = summarize(pooled, {"hybrid": rows}, {"hybrid": {}})["variants"]["hybrid"]
+    assert entry["judged@10"] == pytest.approx(graded / n_docs)
+    assert "judged@10" in ev_run.format_table(summarize(pooled, {"hybrid": rows}, {"hybrid": {}}))
+    plain = summarize(tiny, {"hybrid": rows}, {"hybrid": {}})
+    assert "judged@10" not in plain["variants"]["hybrid"]
+    assert "judged@10" not in ev_run.format_table(plain)
+
+
+def test_summary_records_each_variants_search_settings(tiny, tmp_path, fake_embed, fake_rerank,
+                                                       monkeypatch):
+    summary = _main(tiny, tmp_path, monkeypatch, [
+        Variant("hybrid", index=SMALL),
+        Variant("hybrid+rerank", rerank=True, index=SMALL),
+    ])
+    assert summary["variants"]["hybrid"]["search"] == {
+        "rrf_k": 60, "fts_operator": "and", "query_instruction": "", "rerank": None}
+    assert summary["variants"]["hybrid+rerank"]["search"]["rerank"] == {
+        "model": "BAAI/bge-reranker-base", "revision": "test-rerank-rev", "top_n": 50}
+    again = _main(tiny, tmp_path, monkeypatch, [Variant("hybrid", index=SMALL)])
+    assert again["variants"]["hybrid+rerank"]["search"] == summary["variants"]["hybrid+rerank"]["search"]
