@@ -23,12 +23,18 @@ Results go to `evals/results/<dataset>/`:
   each of those docs, the `fts_rank`, `vec_rank` and `matched_in` of its
   best chunk), `n_hits`/`n_fts`/`n_vec` (how many of the 100 returned chunks
   each retriever found), and the four metrics.
-- `summary.json`: per-variant means, latency, index cost, the FTS zero-hit
-  rate, differences from the baseline with confidence intervals, and the
-  environment that produced them (CPU, library versions, commit).
+- `summary.json`: per-variant means, latency, index cost (including the
+  embedding model's Hub revision), the FTS zero-hit rate, differences from
+  the baseline with confidence intervals, and the environment that produced
+  each variant's rows (CPU, library versions, commit). Running a subset of
+  variants updates their entries and keeps the others.
 
-Rerunning from a fresh clone reproduces the committed rows exactly, apart
-from `latency_ms`.
+On the same hardware, rerunning from a fresh clone reproduces the committed
+rows exactly, apart from `latency_ms`: checked by rebuilding the SciFact
+index from an empty cache. A different CPU or BLAS library could swap the
+order of near-tied vector hits. Alexandria has no setting to pin the
+embedding model, so it loads whatever is on the Hub's `main`; the revision
+it got is recorded with each index and is part of the cache key.
 
 ## Isolation
 
@@ -38,9 +44,10 @@ never reads or writes your own corpus. Documents go in through
 `ingest_fetched`, the same call `store_document_tool` makes, so extraction,
 normalization, chunking and embedding are all part of what's measured.
 
-The hash covers the corpus, the embedding model, the chunk settings and
-the source of `alexandria/ingest/` and `db.py`. Changing any of them builds
-a new index; an ingest fix can't be measured against a stale one. A build
+The hash covers the corpus, the embedding model and its Hub revision, the
+chunk settings and the source of `alexandria/ingest/` and `db.py`. Changing
+any of them builds a new index; an ingest fix can't be measured against a
+stale one. A build
 that was interrupted (no `build.json`) is discarded and redone.
 
 ## How results are scored
@@ -53,10 +60,19 @@ chunk ranks 11th still scores at rank 2 if only one other document comes
 before it. On SciFact almost every abstract is a single chunk, so the
 choice barely matters there.
 
+`limit=100` also widens what `hybrid` fuses: `search()` takes
+`max(3 × limit, 30)` candidates from each retriever, so 300 here against 30
+for `search_tool`'s default `limit=10`. On SciFact that changes the top 10
+for 5 of 300 queries and leaves mean nDCG@10 the same, but it matters more
+when FTS returns many results (the `-or` variants), so read `hybrid` as
+"the default install's ranking with a wider candidate window".
+
 **Metrics.** They follow trec_eval's conventions, which is what BEIR's
 published numbers use, and are cross-checked against
 [ir-measures](https://github.com/terrierteam/ir_measures) (unit tests on
-random rankings, plus `evals.crosscheck` on every full run).
+random rankings, plus `python -m evals.crosscheck` after a full run).
+For the committed SciFact run (commit `8f01baf`) all three variants matched
+pytrec_eval: largest difference 2.2e-16 over 3,600 per-query values.
 
 | Metric | Meaning |
 |---|---|
@@ -69,8 +85,10 @@ random rankings, plus `evals.crosscheck` on every full run).
 - **A query that returns nothing scores 0.** It's a miss, not a gap, and it
   stays in the mean.
 - **A query with no relevant documents has no score.** It is left out of
-  that metric's mean (the `n` beside each mean says how many counted), as
-  trec_eval does.
+  that metric's mean (the `n` beside each mean says how many counted).
+  trec_eval would instead score it 0 and keep it in the mean; leaving it
+  out keeps unanswerable queries from dragging every variant down equally.
+  SciFact has none; the papers set will have about five.
 - **Unjudged documents count as non-relevant.**
 - **Differences from the baseline** (`hybrid`, the default install) are the
   mean per-query difference with a paired bootstrap 95% CI: 10,000
@@ -138,8 +156,10 @@ committed rows):
 | 9–12 words | 95 of 100 (95%) |
 | 13+ words | 128 of 129 (99%) |
 
-On the 16 queries where FTS does match, it scores nDCG@10 0.875, in line
-with a working BM25. Anserini's query is a disjunction (any term may
+On the 16 queries where FTS does match, it scores nDCG@10 0.875. That
+isn't proof of a working BM25 on its own: these are the queries short or
+specific enough for every word to appear in one abstract, and they are
+easy for vectors too (`vec` scores 0.895 on them). Anserini's query is a disjunction (any term may
 match, ranked by BM25), so the like-for-like comparison is the `fts-or`
 variant (phase 4). Smaller differences that remain after that: FTS5's
 `bm25()` uses k1 = 1.2, b = 0.75 where Anserini uses 0.9 and 0.4; Lucene's
@@ -147,12 +167,17 @@ English analyzer drops stopwords and FTS5's tokenizer doesn't; and
 Alexandria scores chunks, not documents (identical here, since almost
 every abstract is a single chunk).
 
-**`vec` scores 0.720 against the published 0.713.** The setups differ in
-one known way: BGE's MTEB evaluation prepends "Represent this sentence for
+**`vec` scores 0.720 against the published 0.713.** The biggest known
+difference: BGE's MTEB evaluation prepends "Represent this sentence for
 searching relevant passages: " to every query, and Alexandria's default
 (`embeddings.query_instruction = ""`) doesn't. The `hybrid+qi` variant
-(phase 4) measures that directly. Both truncate documents at 512 tokens,
-so truncation isn't a difference between them.
+(phase 4) measures that directly. Smaller ones: BGE's evaluation joins
+title and text with a space where we use a blank line
+([`flag_dres_model.py`](https://github.com/FlagOpen/FlagEmbedding/blob/fd1a2bdf69488ffebe0327999d4400d8c8058a0b/research/C_MTEB/flag_dres_model.py));
+Alexandria NFKC-normalizes the text before embedding; and the 7 abstracts
+longer than 800 words are split into chunks and scored by their best one.
+Both truncate at 512 tokens, so truncation isn't a difference between
+them.
 
 **`hybrid` is statistically indistinguishable from `vec`**, because RRF
 over one non-empty list just reproduces that list. On all 284 queries
@@ -166,7 +191,9 @@ prediction P1.
 ### Known caveats
 
 - **Embedding truncation.** `bge-small-en-v1.5` reads at most 512 tokens.
-  On SciFact's text a word averages 1.57 tokens, so 512 tokens is about
+  Counted with its tokenizer over the SciFact corpus (a one-off
+  measurement, not yet scripted; phase 5's report will be), a word averages
+  1.57 tokens, so 512 tokens is about
   326 words, while a default chunk is 800 words (~1,257 tokens): the
   vector side never sees roughly the last 60% of a full-size chunk. Only
   8.8% of SciFact abstracts exceed 512 tokens, so this matters little

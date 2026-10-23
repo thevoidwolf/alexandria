@@ -15,6 +15,14 @@ from evals.index import (
 SMALL = IndexSettings(chunk_tokens=50, chunk_overlap=10)
 
 
+@pytest.fixture(autouse=True)
+def model_rev(monkeypatch):
+    """Stand in for the Hub lookup; tests that care set ``rev["value"]``."""
+    rev = {"value": "rev-1"}
+    monkeypatch.setattr(ev_index, "model_revision", lambda name: rev["value"])
+    return rev
+
+
 def _dataset(**docs: str) -> Dataset:
     return Dataset(name="tiny", docs=docs, queries={}, qrels={})
 
@@ -117,3 +125,14 @@ def test_translate_qrels_keeps_docs_missing_from_the_index():
 def test_home_holds_no_blobs(tiny, tmp_path, fake_embed):
     built = build_index(tiny, SMALL, tmp_path / "cache")
     assert [p for p in (built.home / "blobs").rglob("*") if p.is_file()] == []
+
+
+def test_key_changes_when_the_model_revision_moves(tiny, model_rev):
+    before = index_key(tiny, SMALL)
+    model_rev["value"] = "rev-2"
+    assert index_key(tiny, SMALL) != before
+
+
+def test_build_records_the_model_revision(tiny, tmp_path, fake_embed, model_rev):
+    model_rev["value"] = "5c38ec7"
+    assert build_index(tiny, SMALL, tmp_path / "cache").stats["embed_revision"] == "5c38ec7"

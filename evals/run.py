@@ -90,14 +90,16 @@ def run_variant(ds: Dataset, v: Variant, built: BuiltIndex) -> list[dict]:
     return rows
 
 
-def _git_sha() -> str | None:
+def _git_sha(repo: Path = REPO) -> str | None:
     try:
         sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True, check=True
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
         ).stdout.strip()
+        # Results are rewritten by every run (latency), so they don't count;
+        # new, uncommitted files do.
         dirty = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=REPO, capture_output=True, text=True, check=True,
+            ["git", "status", "--porcelain", "--", ".", ":(exclude)evals/results"],
+            cwd=repo, capture_output=True, text=True, check=True,
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return None
@@ -122,7 +124,11 @@ def environment() -> dict:
         "platform": platform.platform(),
         "python": platform.python_version(),
         "sqlite": sqlite3.sqlite_version,
-        **{pkg: version(pkg) for pkg in ("sqlite-vec", "torch", "sentence-transformers", "numpy")},
+        **{
+            pkg: version(pkg)
+            for pkg in ("sqlite-vec", "torch", "sentence-transformers", "transformers",
+                        "tokenizers", "numpy")
+        },
         "alexandria_commit": _git_sha(),
     }
 
@@ -131,8 +137,11 @@ def summarize(
     ds: Dataset,
     rows_by_variant: dict[str, list[dict]],
     builds: dict[str, dict],
-    env: dict | None = None,
+    envs: dict[str, dict] | None = None,
 ) -> dict:
+    """``envs`` maps each variant to the environment that produced its rows
+    (variants can come from different runs); missing ones get the current one."""
+    envs = envs or {}
     variants = {}
     base_rows = {r["query_id"]: r for r in rows_by_variant.get(BASELINE, [])}
     for name, rows in rows_by_variant.items():
@@ -152,6 +161,7 @@ def summarize(
                 sum(r["n_fts"] == 0 for r in rows) / len(rows) if rows and uses_fts else None
             ),
             "index": builds.get(name, {}),
+            "environment": envs[name] if name in envs else environment(),
         }
         if base_rows and name != BASELINE:
             entry["vs_baseline"] = {}
@@ -174,7 +184,6 @@ def summarize(
         "n_queries": len(ds.queries),
         "baseline": BASELINE,
         "protocol": {"search_limit": SEARCH_LIMIT, "doc_k": DOC_K, "bootstrap": BOOTSTRAP},
-        "environment": env if env is not None else environment(),
         "variants": variants,
     }
 
@@ -186,7 +195,10 @@ def format_table(summary: dict) -> str:
     for name, v in summary["variants"].items():
         m = {k: v["metrics"][k]["mean"] for k in METRICS}
         d = v.get("vs_baseline", {}).get("ndcg@10")
-        delta = f"{d['diff']:+.4f} [{d['lo']:+.4f}, {d['hi']:+.4f}]" if d else "baseline"
+        if d:
+            delta = f"{d['diff']:+.4f} [{d['lo']:+.4f}, {d['hi']:+.4f}]"
+        else:
+            delta = "baseline" if name == summary["baseline"] else "—"
         zero = v["fts_zero_hit_rate"]
         lines.append(
             f"{name:<14}{m['ndcg@10']:>9.4f}{m['recall@5']:>8.4f}{m['recall@10']:>8.4f}"
@@ -194,6 +206,20 @@ def format_table(summary: dict) -> str:
             f"{v['latency_ms']['p95']:>9.1f}{'' if zero is None else f'{zero:.1%}':>11}"
         )
     return "\n".join(lines)
+
+
+def _previous_results(out_dir: Path) -> tuple[dict, dict, dict]:
+    """Rows, build stats and environments of variants already in ``out_dir``,
+    so running a subset of variants updates the summary instead of replacing it."""
+    old = out_dir / "summary.json"
+    old_variants = json.loads(old.read_text())["variants"] if old.exists() else {}
+    rows, builds, envs = {}, {}, {}
+    for path in sorted(out_dir.glob("*.jsonl")):
+        rows[path.stem] = [json.loads(line) for line in path.read_text().splitlines()]
+        entry = old_variants.get(path.stem, {})
+        builds[path.stem] = entry.get("index", {})
+        envs[path.stem] = entry.get("environment")  # None: produced by an unknown run
+    return rows, builds, envs
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -206,20 +232,19 @@ def main(argv: list[str] | None = None) -> None:
 
     env = environment()  # before the run: a commit made during it isn't what produced it
     ds = DATASETS[args.dataset](args.cache)
-    rows_by_variant: dict[str, list[dict]] = {}
-    builds: dict[str, dict] = {}
     out_dir = args.out / ds.name
     out_dir.mkdir(parents=True, exist_ok=True)
+    rows_by_variant, builds, envs = _previous_results(out_dir)
     for v in resolve(args.variants):
         built = build_index(ds, v.index, args.cache)
         rows = run_variant(ds, v, built)
-        rows_by_variant[v.name], builds[v.name] = rows, built.stats
+        rows_by_variant[v.name], builds[v.name], envs[v.name] = rows, built.stats, env
         with (out_dir / f"{v.name}.jsonl").open("w") as f:
             for r in rows:
                 f.write(json.dumps(r, sort_keys=True) + "\n")
         print(f"{v.name}: {len(rows)} queries", flush=True)
 
-    summary = summarize(ds, rows_by_variant, builds, env)
+    summary = summarize(ds, rows_by_variant, builds, envs)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(format_table(summary))
 

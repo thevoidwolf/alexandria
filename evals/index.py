@@ -6,8 +6,9 @@ default) is never read or written. Documents go in through
 ``ingest_fetched`` exactly as ``store_document_tool`` sends them, so what
 is measured is the real extract/normalize/chunk/embed pipeline.
 
-The cache key covers the corpus, the settings and the source of the ingest
-code, so an ingest fix rebuilds the index instead of reusing a stale one.
+The cache key covers the corpus, the settings, the embedding model's Hub
+revision and the source of the ingest code, so an ingest fix or a moved
+model rebuilds the index instead of reusing a stale one.
 ``build.json`` is written last; a directory without it is a crashed build
 and is thrown away.
 """
@@ -24,8 +25,9 @@ from pathlib import Path
 
 import alexandria.db
 import alexandria.ingest
-from alexandria.config import Config, load as load_config
+from alexandria.config import Config, EmbeddingsConfig, load as load_config
 from alexandria.db import connect
+from alexandria.ingest.embed import _get_model
 from alexandria.ingest.fetch import Fetched
 from alexandria.ingest.orchestrator import ingest_fetched
 from evals.datasets import Dataset
@@ -56,9 +58,27 @@ def _code_fingerprint() -> bytes:
     return h.digest()
 
 
+def model_revision(name: str) -> str:
+    """Hub commit of the embedding model Alexandria loads for ``name``.
+
+    Alexandria loads the model's ``main`` revision and has no setting to pin
+    one, so the eval records which commit that was. The model is loaded
+    first, exactly as ingest would (downloading it on a fresh machine, or
+    picking up a moved ``main``), then the revision is read from the cache.
+    """
+    from huggingface_hub import try_to_load_from_cache
+
+    _get_model(name, EmbeddingsConfig().device)
+    path = try_to_load_from_cache(name, "config.json")
+    return Path(path).parent.name if isinstance(path, str) else "not-from-hub"
+
+
 def index_key(ds: Dataset, s: IndexSettings) -> str:
     h = hashlib.sha256()
-    h.update(json.dumps({"dataset": ds.name, **asdict(s)}, sort_keys=True).encode())
+    h.update(json.dumps(
+        {"dataset": ds.name, "embed_revision": model_revision(s.embed_model), **asdict(s)},
+        sort_keys=True,
+    ).encode())
     for doc_id in sorted(ds.docs):
         h.update(doc_id.encode() + b"\0" + ds.docs[doc_id].encode() + b"\0")
     h.update(_code_fingerprint())
@@ -129,6 +149,7 @@ def build_index(ds: Dataset, s: IndexSettings, cache_root: Path) -> BuiltIndex:
         "n_collapsed": n_collapsed,
         "failed": failed,
         "embed_device": cfg.embeddings.device,
+        "embed_revision": model_revision(s.embed_model),
         "python": platform.python_version(),
     }
     (root / "docmap.json").write_text(json.dumps(doc_map, sort_keys=True))

@@ -7,8 +7,9 @@ discount, the ideal DCG cut at k, and "relevant" meaning grade >= 1.
 ``ranked`` is a list of distinct doc ids, best first; ``qrels`` maps doc id
 to grade, with unjudged docs treated as non-relevant. A query with no
 relevant docs has no defined score, so every metric returns None for it and
-callers leave it out of means (trec_eval skips such queries too). A query
-that returns nothing still scores 0.0: an empty result is a miss.
+callers leave it out of means. (Here we depart from trec_eval, which would
+score it 0 and average it in.) A query that returns nothing still scores
+0.0: an empty result is a miss.
 """
 from __future__ import annotations
 
