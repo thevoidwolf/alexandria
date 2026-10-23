@@ -104,6 +104,7 @@ uv run alexandria ingest-url https://arxiv.org/abs/2004.04906
 uv run alexandria search "reciprocal rank fusion" --limit 5
 uv run alexandria search "8891-3320-2" --category bills --mode fts
 uv run alexandria search "how do dense retrievers work" --mode vec
+uv run alexandria search "how do dense retrievers work" --rerank   # cross-encoder re-order
 
 # browse the corpus
 uv run alexandria list --category research
@@ -121,6 +122,14 @@ model = "BAAI/bge-small-en-v1.5"
 device = "cpu"                   # "cpu" | "cuda" | "mps"
 # Optional prefix for search queries only. BGE models suggest:
 # query_instruction = "Represent this sentence for searching relevant passages: "
+
+[search]
+# Cross-encoder reranking, used by `alexandria search --rerank` (or by default
+# with rerank = true). The MCP tools and web UI don't rerank yet: that waits
+# on the retrieval evals (evals/REPORT.md) weighing the gain against latency.
+rerank = false
+rerank_model = "BAAI/bge-reranker-base"
+rerank_top_n = 50                # fused chunks the cross-encoder re-orders
 
 [chunking]
 tokens = 800

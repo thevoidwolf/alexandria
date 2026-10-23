@@ -8,6 +8,7 @@ from typing import Literal, get_args
 from alexandria.catalog import display_title
 from alexandria.config import Config
 from alexandria.ingest.embed import embed_texts
+from alexandria.rerank import rerank_scores
 
 SearchMode = Literal["hybrid", "fts", "vec"]
 SEARCH_MODES: tuple[str, ...] = get_args(SearchMode)
@@ -50,6 +51,9 @@ class SearchHit:
     # Convenience view of which retrievers surfaced this chunk. A hit in
     # both is materially more confident than a hit in either alone.
     matched_in: tuple[str, ...] = ()
+    # Cross-encoder score when the search reranked and this chunk was among
+    # the ``rerank_top_n`` it scored; None otherwise. Higher is better.
+    rerank_score: float | None = None
 
 
 def _serialize_vec(vec) -> bytes:
@@ -231,11 +235,14 @@ def search(
     mode: SearchMode = "hybrid",
     rrf_k: int = RRF_K,
     fts_operator: FtsOperator = "and",
+    rerank: bool = False,
 ) -> list[SearchHit]:
     """Hybrid keyword + semantic retrieval, RRF-fused, category/tag filtered.
 
     ``rrf_k`` and ``fts_operator`` exist for the retrieval evals; their
-    defaults are the shipped behaviour.
+    defaults are the shipped behaviour. ``rerank`` re-orders the top
+    ``cfg.search.rerank_top_n`` fused chunks by a cross-encoder's score,
+    keeps the rest in fused order behind them, then applies ``limit``.
     """
     if fts_operator not in FTS_OPERATORS:
         raise ValueError(f"fts_operator must be one of {FTS_OPERATORS}, got {fts_operator!r}")
@@ -272,11 +279,28 @@ def search(
     fts_rank_by_rowid = {rowid: i + 1 for i, rowid in enumerate(fts_ranked)}
     vec_rank_by_rowid = {rowid: i + 1 for i, rowid in enumerate(vec_ranked)}
 
-    ordered = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    ordered = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
+
+    rows: dict[int, tuple] = {}
+    rerank_by_rowid: dict[int, float] = {}
+    if rerank and ordered:
+        head = ordered[:cfg.search.rerank_top_n]
+        for rowid, _ in head:
+            if (row := _load_hit(conn, rowid)) is not None:
+                rows[rowid] = row
+        head = [kv for kv in head if kv[0] in rows]
+        scores = rerank_scores(
+            query, [rows[rowid][2] for rowid, _ in head],
+            cfg.search.rerank_model, cfg.embeddings.device,
+        ) if head else []
+        rerank_by_rowid = {rowid: s for (rowid, _), s in zip(head, scores)}
+        # A stable sort, so equal scores keep their fused order.
+        head.sort(key=lambda kv: rerank_by_rowid[kv[0]], reverse=True)
+        ordered = head + ordered[cfg.search.rerank_top_n:]
 
     hits: list[SearchHit] = []
-    for rowid, score in ordered:
-        row = _load_hit(conn, rowid)
+    for rowid, score in ordered[:limit]:
+        row = rows.get(rowid) or _load_hit(conn, rowid)
         if row is None:
             continue
         chunk_id, doc_id, chunk_text, title, doc_category, source_uri, content_type = row
@@ -305,6 +329,7 @@ def search(
                 fts_rank=fts_rank,
                 vec_rank=vec_rank,
                 matched_in=tuple(matched),
+                rerank_score=rerank_by_rowid.get(rowid),
             )
         )
     return hits
