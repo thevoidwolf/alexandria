@@ -1,0 +1,245 @@
+{
+  "baseline": "hybrid",
+  "dataset": "papers",
+  "n_queries": 43,
+  "protocol": {
+    "bootstrap": {
+      "alpha": 0.05,
+      "n_resamples": 10000,
+      "seed": 0
+    },
+    "doc_k": 10,
+    "search_limit": 100
+  },
+  "source": {
+    "papers.lock.json": "cafff488bd92d606bd8a31a65f18ede4f4a0ca53c01c8d394b89210b46fba5d9"
+  },
+  "variants": {
+    "fts": {
+      "environment": {
+        "alexandria_commit": "4c5f1c65ba31580bb60f86ed2c864514290ea53b",
+        "cpu": "AMD Ryzen 7 5700X3D 8-Core Processor",
+        "cpu_count": 16,
+        "numpy": "2.5.1",
+        "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+        "python": "3.12.3",
+        "sentence-transformers": "5.6.0",
+        "sqlite": "3.45.1",
+        "sqlite-vec": "0.1.9",
+        "tokenizers": "0.22.2",
+        "torch": "2.13.0",
+        "transformers": "4.57.6"
+      },
+      "fts_zero_hit_rate": 0.46511627906976744,
+      "index": {
+        "build_seconds": 75.5,
+        "db_bytes": 17809408,
+        "embed_device": "cpu",
+        "embed_revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+        "failed": {},
+        "key": "papers-6c7893fed46a455d",
+        "n_chunks": 595,
+        "n_collapsed": 0,
+        "n_docs": 37,
+        "python": "3.12.3",
+        "settings": {
+          "chunk_overlap": 100,
+          "chunk_tokens": 800,
+          "embed_dim": 384,
+          "embed_model": "BAAI/bge-small-en-v1.5",
+          "pdf_backend": "pypdf"
+        }
+      },
+      "latency_ms": {
+        "p50": 3.0,
+        "p95": 10.524999999999999
+      },
+      "metrics": {
+        "mrr@10": {
+          "mean": 0.5769230769230769,
+          "n": 39
+        },
+        "ndcg@10": {
+          "mean": 0.3196213738633031,
+          "n": 39
+        },
+        "recall@10": {
+          "mean": 0.19447496947496945,
+          "n": 39
+        },
+        "recall@5": {
+          "mean": 0.18145095645095644,
+          "n": 39
+        }
+      },
+      "vs_baseline": {
+        "mrr@10": {
+          "diff": -0.3717948717948718,
+          "hi": -0.21794871794871795,
+          "lo": -0.5256410256410257,
+          "n": 39
+        },
+        "ndcg@10": {
+          "diff": -0.5610914408317138,
+          "hi": -0.4618860786063864,
+          "lo": -0.6604338067789441,
+          "n": 39
+        },
+        "recall@10": {
+          "diff": -0.7760785510785511,
+          "hi": -0.688929588929589,
+          "lo": -0.8538878713878714,
+          "n": 39
+        },
+        "recall@5": {
+          "diff": -0.38353683353683354,
+          "hi": -0.31037494912494923,
+          "lo": -0.45735754985754984,
+          "n": 39
+        }
+      }
+    },
+    "hybrid": {
+      "environment": {
+        "alexandria_commit": "4c5f1c65ba31580bb60f86ed2c864514290ea53b",
+        "cpu": "AMD Ryzen 7 5700X3D 8-Core Processor",
+        "cpu_count": 16,
+        "numpy": "2.5.1",
+        "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+        "python": "3.12.3",
+        "sentence-transformers": "5.6.0",
+        "sqlite": "3.45.1",
+        "sqlite-vec": "0.1.9",
+        "tokenizers": "0.22.2",
+        "torch": "2.13.0",
+        "transformers": "4.57.6"
+      },
+      "fts_zero_hit_rate": 0.46511627906976744,
+      "index": {
+        "build_seconds": 75.5,
+        "db_bytes": 17809408,
+        "embed_device": "cpu",
+        "embed_revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+        "failed": {},
+        "key": "papers-6c7893fed46a455d",
+        "n_chunks": 595,
+        "n_collapsed": 0,
+        "n_docs": 37,
+        "python": "3.12.3",
+        "settings": {
+          "chunk_overlap": 100,
+          "chunk_tokens": 800,
+          "embed_dim": 384,
+          "embed_model": "BAAI/bge-small-en-v1.5",
+          "pdf_backend": "pypdf"
+        }
+      },
+      "latency_ms": {
+        "p50": 14.23,
+        "p95": 18.414
+      },
+      "metrics": {
+        "mrr@10": {
+          "mean": 0.9487179487179487,
+          "n": 39
+        },
+        "ndcg@10": {
+          "mean": 0.8807128146950166,
+          "n": 39
+        },
+        "recall@10": {
+          "mean": 0.9705535205535204,
+          "n": 39
+        },
+        "recall@5": {
+          "mean": 0.5649877899877901,
+          "n": 39
+        }
+      }
+    },
+    "vec": {
+      "environment": {
+        "alexandria_commit": "4c5f1c65ba31580bb60f86ed2c864514290ea53b",
+        "cpu": "AMD Ryzen 7 5700X3D 8-Core Processor",
+        "cpu_count": 16,
+        "numpy": "2.5.1",
+        "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+        "python": "3.12.3",
+        "sentence-transformers": "5.6.0",
+        "sqlite": "3.45.1",
+        "sqlite-vec": "0.1.9",
+        "tokenizers": "0.22.2",
+        "torch": "2.13.0",
+        "transformers": "4.57.6"
+      },
+      "fts_zero_hit_rate": null,
+      "index": {
+        "build_seconds": 75.5,
+        "db_bytes": 17809408,
+        "embed_device": "cpu",
+        "embed_revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+        "failed": {},
+        "key": "papers-6c7893fed46a455d",
+        "n_chunks": 595,
+        "n_collapsed": 0,
+        "n_docs": 37,
+        "python": "3.12.3",
+        "settings": {
+          "chunk_overlap": 100,
+          "chunk_tokens": 800,
+          "embed_dim": 384,
+          "embed_model": "BAAI/bge-small-en-v1.5",
+          "pdf_backend": "pypdf"
+        }
+      },
+      "latency_ms": {
+        "p50": 16.5,
+        "p95": 23.009999999999998
+      },
+      "metrics": {
+        "mrr@10": {
+          "mean": 0.9252136752136751,
+          "n": 39
+        },
+        "ndcg@10": {
+          "mean": 0.8501526777400711,
+          "n": 39
+        },
+        "recall@10": {
+          "mean": 0.9577431827431826,
+          "n": 39
+        },
+        "recall@5": {
+          "mean": 0.5447598697598699,
+          "n": 39
+        }
+      },
+      "vs_baseline": {
+        "mrr@10": {
+          "diff": -0.023504273504273508,
+          "hi": 0.038461538461538464,
+          "lo": -0.09401709401709403,
+          "n": 39
+        },
+        "ndcg@10": {
+          "diff": -0.030560136954945714,
+          "hi": 0.00787041743962565,
+          "lo": -0.07569371765310742,
+          "n": 39
+        },
+        "recall@10": {
+          "diff": -0.012810337810337807,
+          "hi": 0.007336182336182338,
+          "lo": -0.03707773707773707,
+          "n": 39
+        },
+        "recall@5": {
+          "diff": -0.02022792022792023,
+          "hi": -0.0007122507122507126,
+          "lo": -0.04294871794871795,
+          "n": 39
+        }
+      }
+    }
+  }
+}
