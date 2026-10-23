@@ -263,7 +263,7 @@ def main(argv: list[str] | None = None) -> None:
     n = session(ds, rows, builds, papers.DATA_DIR / "qrels.tsv", ask=input, show=print,
                 seed=args.seed)
     print(f"\n{n} judgement(s) added to {papers.DATA_DIR / 'qrels.tsv'}. "
-          "Re-run `uv run python -m evals.run --dataset papers` to score them.")
+          "Score them with `uv run python -m evals.run --dataset papers --rescore`.")
 
 
 if __name__ == "__main__":
