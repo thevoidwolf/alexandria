@@ -1,0 +1,178 @@
+# Retrieval evals
+
+A harness that measures how well Alexandria's search finds the right
+documents, and what each retrieval choice costs. Findings, hypotheses and
+the failure log are in [REPORT.md](REPORT.md).
+
+## Running it
+
+```bash
+uv sync --group eval            # pyarrow + ir-measures; not needed by Alexandria itself
+uv run python -m evals.run --dataset scifact --variants all
+uv run python -m evals.crosscheck --dataset scifact
+```
+
+The first run downloads SciFact (about 5 MB) and builds an index from its
+5,183 abstracts, which takes a few minutes on CPU. Later runs reuse the
+index. `--variants` takes `all` or a comma-separated list (`fts,vec`).
+
+Results go to `evals/results/<dataset>/`:
+
+- `<variant>.jsonl`: one row per query: `query_id`, `variant`, `mode`,
+  `n_words`, `latency_ms`, `docs` (top 10 doc ids, best first), `hits` (for
+  each of those docs, the `fts_rank`, `vec_rank` and `matched_in` of its
+  best chunk), `n_hits`/`n_fts`/`n_vec` (how many of the 100 returned chunks
+  each retriever found), and the four metrics.
+- `summary.json`: per-variant means, latency, index cost, the FTS zero-hit
+  rate, differences from the baseline with confidence intervals, and the
+  environment that produced them (CPU, library versions, commit).
+
+Rerunning from a fresh clone reproduces the committed rows exactly, apart
+from `latency_ms`.
+
+## Isolation
+
+Every index is a throwaway Alexandria home under
+`evals/.cache/<dataset>-<hash>/home`, opened by explicit path, so the eval
+never reads or writes your own corpus. Documents go in through
+`ingest_fetched`, the same call `store_document_tool` makes, so extraction,
+normalization, chunking and embedding are all part of what's measured.
+
+The hash covers the corpus, the embedding model, the chunk settings and
+the source of `alexandria/ingest/` and `db.py`. Changing any of them builds
+a new index; an ingest fix can't be measured against a stale one. A build
+that was interrupted (no `build.json`) is discarded and redone.
+
+## How results are scored
+
+**Chunks to documents.** Alexandria returns chunks; relevance judgements are
+per document. Each query runs `search(query, limit=100)`, the chunks are
+collapsed to documents in order of first appearance, and the top 10
+documents are scored. This is a choice, not a given: a document whose best
+chunk ranks 11th still scores at rank 2 if only one other document comes
+before it. On SciFact almost every abstract is a single chunk, so the
+choice barely matters there.
+
+**Metrics.** They follow trec_eval's conventions, which is what BEIR's
+published numbers use, and are cross-checked against
+[ir-measures](https://github.com/terrierteam/ir_measures) (unit tests on
+random rankings, plus `evals.crosscheck` on every full run).
+
+| Metric | Meaning |
+|---|---|
+| nDCG@10 | Headline metric, comparable with BEIR. Rewards finding relevant docs *and* ranking them high. Linear gain, log2 discount, ideal ranking cut at 10. |
+| Recall@5, Recall@10 | Share of the relevant docs that came back at all. What matters most to an agent reading the results. |
+| MRR@10 | 1 / rank of the first relevant doc (0 if none in the top 10). |
+| Latency p50 / p95 | Wall time of one `search()` call: query embedding plus both retrievers plus fusion. Warm: one untimed query first loads the model. Hardware is in `summary.json`. |
+| Index build time, DB size | The cost side. Build time is the whole ingest of the corpus. |
+
+- **A query that returns nothing scores 0.** It's a miss, not a gap, and it
+  stays in the mean.
+- **A query with no relevant documents has no score.** It is left out of
+  that metric's mean (the `n` beside each mean says how many counted), as
+  trec_eval does.
+- **Unjudged documents count as non-relevant.**
+- **Differences from the baseline** (`hybrid`, the default install) are the
+  mean per-query difference with a paired bootstrap 95% CI: 10,000
+  resamples of the queries, seed 0. A difference whose CI crosses zero is
+  not called real.
+- **Identical documents.** Alexandria stores identical texts once, so two
+  dataset docs can become one stored document. Both ids map to it, and the
+  judgements are merged at the higher grade. Results use dataset ids
+  (Alexandria's ids change on every build). The count is `n_collapsed` in
+  `summary.json`.
+
+## Datasets
+
+### BEIR SciFact
+
+[SciFact](https://huggingface.co/datasets/BeIR/scifact) (CC BY-SA 4.0):
+5,183 paper abstracts and, in the test split, 300 scientific claims with 339
+relevance judgements (all grade 1). Downloaded from the Hugging Face Hub at
+pinned revisions (`BeIR/scifact@b3b5335`, `BeIR/scifact-qrels@2938d17`);
+nothing from it is committed. Each abstract is stored as a `.txt` document
+whose body is `title + "\n\n" + text`, the same "flat" layout as Anserini's
+BM25 baseline below.
+
+SciFact is the sanity check: a public benchmark with published numbers to
+compare against. It is small and its documents are short.
+
+#### Baselines
+
+From `evals/results/scifact/` (CPU: Ryzen 7 5700X3D, 16 threads, WSL2;
+full environment in `summary.json`). Δ is against `hybrid`, the default
+install, with a paired bootstrap 95% CI.
+
+| Variant | nDCG@10 | Recall@5 | Recall@10 | MRR@10 | Δ nDCG@10 [95% CI] | p50 / p95 ms |
+|---|---|---|---|---|---|---|
+| `fts` | 0.0467 | 0.0458 | 0.0458 | 0.0500 | −0.675 [−0.720, −0.630] | 0.5 / 1.0 |
+| `vec` | 0.7200 | 0.7653 | 0.8452 | 0.6845 | −0.002 [−0.006, +0.001] | 21.0 / 24.8 |
+| `hybrid` | 0.7219 | 0.7686 | 0.8452 | 0.6872 | baseline | 21.6 / 26.1 |
+
+The index holds 5,183 documents in 5,192 chunks (7 abstracts run past 800
+words; none collapsed as duplicates). Built in 306 s on CPU; the database
+is 63 MB.
+
+#### Against published numbers
+
+| System | nDCG@10 | Source |
+|---|---|---|
+| BM25, Anserini, "flat" (title + text in one field, as here) | 0.6789 | [Anserini regression](https://github.com/castorini/anserini/blob/59d6fa720ffdf2af7f68e453ca97fa5b452289bf/docs/reproduce/from-document-collection/beir-v1.0.0-scifact.flat.md) |
+| BM25, Anserini, multifield (title and text weighted equally) | 0.6647 | [Anserini regression](https://github.com/castorini/anserini/blob/59d6fa720ffdf2af7f68e453ca97fa5b452289bf/docs/reproduce/from-document-collection/beir-v1.0.0-scifact.multifield.md) |
+| bge-small-en-v1.5, with BGE's query instruction | 0.7128 | [Model card](https://huggingface.co/BAAI/bge-small-en-v1.5) (MTEB SciFact, `ndcg_at_10` 71.275); instruction per [FlagEmbedding's eval script](https://github.com/FlagOpen/FlagEmbedding/blob/fd1a2bdf69488ffebe0327999d4400d8c8058a0b/research/C_MTEB/eval_MTEB.py) |
+
+**`fts` scores 0.047 against BM25's 0.679, and almost all of that gap is
+how the query is built, not BM25.** `search.py` hands the query to FTS5 as
+written, and FTS5 joins bare words with an implicit AND; the
+`_quote_terms` fallback (used when the query isn't valid FTS5 syntax)
+does the same. A chunk only matches if it contains every word of the
+query, stopwords included, since the `porter unicode61` tokenizer keeps
+them. SciFact queries are whole-sentence claims, so FTS returns nothing for
+284 of the 300 (94.7%), and the miss rate climbs with length (from the
+committed rows):
+
+| Query length | FTS finds nothing |
+|---|---|
+| 1–4 words | 2 of 3 |
+| 5–8 words | 59 of 68 (87%) |
+| 9–12 words | 95 of 100 (95%) |
+| 13+ words | 128 of 129 (99%) |
+
+On the 16 queries where FTS does match, it scores nDCG@10 0.875, in line
+with a working BM25. Anserini's query is a disjunction (any term may
+match, ranked by BM25), so the like-for-like comparison is the `fts-or`
+variant (phase 4). Smaller differences that remain after that: FTS5's
+`bm25()` uses k1 = 1.2, b = 0.75 where Anserini uses 0.9 and 0.4; Lucene's
+English analyzer drops stopwords and FTS5's tokenizer doesn't; and
+Alexandria scores chunks, not documents (identical here, since almost
+every abstract is a single chunk).
+
+**`vec` scores 0.720 against the published 0.713.** The setups differ in
+one known way: BGE's MTEB evaluation prepends "Represent this sentence for
+searching relevant passages: " to every query, and Alexandria's default
+(`embeddings.query_instruction = ""`) doesn't. The `hybrid+qi` variant
+(phase 4) measures that directly. Both truncate documents at 512 tokens,
+so truncation isn't a difference between them.
+
+**`hybrid` is statistically indistinguishable from `vec`**, because RRF
+over one non-empty list just reproduces that list. On all 284 queries
+where FTS found nothing, hybrid's top 10 is exactly vec's. The difference
+is confined to the 16 queries FTS matched, where hybrid scores 0.931
+against vec's 0.895 — too few to conclude anything, but the direction
+hybrid is supposed to go. In other words, on natural-language queries
+the default install is vector search; see [REPORT.md](REPORT.md)
+prediction P1.
+
+### Known caveats
+
+- **Embedding truncation.** `bge-small-en-v1.5` reads at most 512 tokens.
+  On SciFact's text a word averages 1.57 tokens, so 512 tokens is about
+  326 words, while a default chunk is 800 words (~1,257 tokens): the
+  vector side never sees roughly the last 60% of a full-size chunk. Only
+  8.8% of SciFact abstracts exceed 512 tokens, so this matters little
+  here; it will matter on the papers set (REPORT.md P2).
+- **Latency.** Embedding the query takes about 12 ms (p50, CPU, measured
+  separately) of the ~21 ms `vec` and `hybrid` take; the rest is the
+  vector scan and loading the 100 hits. `fts` is sub-millisecond, but on
+  SciFact that is mostly the cost of finding nothing.
+- **One machine.** All numbers come from a single CPU under WSL2.

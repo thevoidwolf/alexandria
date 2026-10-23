@@ -1,0 +1,210 @@
+{
+  "baseline": "hybrid",
+  "dataset": "scifact",
+  "environment": {
+    "alexandria_commit": "8f01bafe7fa03a556a59c0c295195e5e6deb7ca2",
+    "cpu": "AMD Ryzen 7 5700X3D 8-Core Processor",
+    "cpu_count": 16,
+    "numpy": "2.5.1",
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "sentence-transformers": "5.6.0",
+    "sqlite": "3.45.1",
+    "sqlite-vec": "0.1.9",
+    "torch": "2.13.0"
+  },
+  "n_queries": 300,
+  "protocol": {
+    "bootstrap": {
+      "alpha": 0.05,
+      "n_resamples": 10000,
+      "seed": 0
+    },
+    "doc_k": 10,
+    "search_limit": 100
+  },
+  "source": {
+    "BeIR/scifact": "b3b5335604bf5ee3c4447671af975ea25143d4f5",
+    "BeIR/scifact-qrels": "2938d17dc3b09882fdb8c12bbbe2e2dc0e75a029"
+  },
+  "variants": {
+    "fts": {
+      "fts_zero_hit_rate": 0.9466666666666667,
+      "index": {
+        "build_seconds": 306.33,
+        "db_bytes": 63213568,
+        "embed_device": "cpu",
+        "failed": {},
+        "key": "scifact-ae7df1867f7316a4",
+        "n_chunks": 5192,
+        "n_collapsed": 0,
+        "n_docs": 5183,
+        "python": "3.12.3",
+        "settings": {
+          "chunk_overlap": 100,
+          "chunk_tokens": 800,
+          "embed_dim": 384,
+          "embed_model": "BAAI/bge-small-en-v1.5"
+        }
+      },
+      "latency_ms": {
+        "p50": 0.49,
+        "p95": 0.9615000000000004
+      },
+      "metrics": {
+        "mrr@10": {
+          "mean": 0.05,
+          "n": 300
+        },
+        "ndcg@10": {
+          "mean": 0.0466784241425252,
+          "n": 300
+        },
+        "recall@10": {
+          "mean": 0.04583333333333333,
+          "n": 300
+        },
+        "recall@5": {
+          "mean": 0.04583333333333333,
+          "n": 300
+        }
+      },
+      "vs_baseline": {
+        "mrr@10": {
+          "diff": -0.6372486772486773,
+          "hi": -0.5882676917989418,
+          "lo": -0.6855493055555555,
+          "n": 300
+        },
+        "ndcg@10": {
+          "diff": -0.6752112238028195,
+          "hi": -0.629760466592934,
+          "lo": -0.7201232727120244,
+          "n": 300
+        },
+        "recall@10": {
+          "diff": -0.7993888888888889,
+          "hi": -0.7534986111111112,
+          "lo": -0.8441666666666666,
+          "n": 300
+        },
+        "recall@5": {
+          "diff": -0.7227777777777779,
+          "hi": -0.6726111111111112,
+          "lo": -0.7717236111111111,
+          "n": 300
+        }
+      }
+    },
+    "hybrid": {
+      "fts_zero_hit_rate": 0.9466666666666667,
+      "index": {
+        "build_seconds": 306.33,
+        "db_bytes": 63213568,
+        "embed_device": "cpu",
+        "failed": {},
+        "key": "scifact-ae7df1867f7316a4",
+        "n_chunks": 5192,
+        "n_collapsed": 0,
+        "n_docs": 5183,
+        "python": "3.12.3",
+        "settings": {
+          "chunk_overlap": 100,
+          "chunk_tokens": 800,
+          "embed_dim": 384,
+          "embed_model": "BAAI/bge-small-en-v1.5"
+        }
+      },
+      "latency_ms": {
+        "p50": 21.625,
+        "p95": 26.0505
+      },
+      "metrics": {
+        "mrr@10": {
+          "mean": 0.6872486772486773,
+          "n": 300
+        },
+        "ndcg@10": {
+          "mean": 0.7218896479453447,
+          "n": 300
+        },
+        "recall@10": {
+          "mean": 0.8452222222222222,
+          "n": 300
+        },
+        "recall@5": {
+          "mean": 0.7686111111111111,
+          "n": 300
+        }
+      }
+    },
+    "vec": {
+      "fts_zero_hit_rate": null,
+      "index": {
+        "build_seconds": 306.33,
+        "db_bytes": 63213568,
+        "embed_device": "cpu",
+        "failed": {},
+        "key": "scifact-ae7df1867f7316a4",
+        "n_chunks": 5192,
+        "n_collapsed": 0,
+        "n_docs": 5183,
+        "python": "3.12.3",
+        "settings": {
+          "chunk_overlap": 100,
+          "chunk_tokens": 800,
+          "embed_dim": 384,
+          "embed_model": "BAAI/bge-small-en-v1.5"
+        }
+      },
+      "latency_ms": {
+        "p50": 21.0,
+        "p95": 24.83
+      },
+      "metrics": {
+        "mrr@10": {
+          "mean": 0.6844708994708995,
+          "n": 300
+        },
+        "ndcg@10": {
+          "mean": 0.7200042547439368,
+          "n": 300
+        },
+        "recall@10": {
+          "mean": 0.8452222222222222,
+          "n": 300
+        },
+        "recall@5": {
+          "mean": 0.7652777777777778,
+          "n": 300
+        }
+      },
+      "vs_baseline": {
+        "mrr@10": {
+          "diff": -0.002777777777777778,
+          "hi": 0.0,
+          "lo": -0.008333333333333333,
+          "n": 300
+        },
+        "ndcg@10": {
+          "diff": -0.0018853932014078845,
+          "hi": 0.0007817485246961253,
+          "lo": -0.006437928128919778,
+          "n": 300
+        },
+        "recall@10": {
+          "diff": 0.0,
+          "hi": 0.0,
+          "lo": 0.0,
+          "n": 300
+        },
+        "recall@5": {
+          "diff": -0.0033333333333333335,
+          "hi": 0.0,
+          "lo": -0.01,
+          "n": 300
+        }
+      }
+    }
+  }
+}
