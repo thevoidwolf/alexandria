@@ -12,6 +12,12 @@ from alexandria.ingest.embed import embed_texts
 SearchMode = Literal["hybrid", "fts", "vec"]
 SEARCH_MODES: tuple[str, ...] = get_args(SearchMode)
 
+# How FTS combines a query's words. "and" (the default) runs the query as
+# FTS5 syntax, falling back to quoted terms, so every word must match; "or"
+# quotes every word and joins them with OR, so any word can (evals/REPORT.md).
+FtsOperator = Literal["and", "or"]
+FTS_OPERATORS: tuple[str, ...] = get_args(FtsOperator)
+
 # RRF constant. Anserini's default; robust across corpora, no tuning knob.
 RRF_K = 60
 
@@ -88,18 +94,19 @@ def _eligible_rowids_subquery(
     return sql, params
 
 
-def _quote_terms(query: str) -> str | None:
-    """Rewrite free text as an FTS5 expression of literal terms (implicit AND).
+def _quote_terms(query: str, joiner: str = " ") -> str | None:
+    """Rewrite free text as an FTS5 expression of literal terms.
 
     Each whitespace-separated word becomes a quoted string, so punctuation
     is handed to the tokenizer instead of the query parser: ``half-life``
     becomes the phrase "half life" rather than a column filter. Words with
     no letters or digits are dropped. Returns None if nothing is left.
+    The default joiner is FTS5's implicit AND; ``" OR "`` matches any word.
     """
     terms = [t for t in query.split() if any(ch.isalnum() for ch in t)]
     if not terms:
         return None
-    return " ".join('"' + t.replace('"', '""') + '"' for t in terms)
+    return joiner.join('"' + t.replace('"', '""') + '"' for t in terms)
 
 
 def _fts_search(
@@ -107,6 +114,7 @@ def _fts_search(
     query: str,
     eligible: tuple[str, list] | None,
     limit: int,
+    operator: FtsOperator = "and",
 ) -> list[tuple[int, str, str, str]]:
     """Return [(rowid, chunk_id, doc_id, snippet)] ordered by BM25 rank.
 
@@ -114,6 +122,7 @@ def _fts_search(
     phrases, ``prefix*``, ``OR`` and ``NEAR()``. Ordinary text often isn't
     valid syntax (``what's``, ``half-life``, ``C++``), so on a syntax error
     it is retried as quoted literal terms instead of yielding nothing.
+    With ``operator="or"`` only the quoted terms, OR-joined, are run.
     """
     sql = (
         "SELECT rowid, chunk_id, doc_id, "
@@ -128,11 +137,12 @@ def _fts_search(
     sql += " ORDER BY rank LIMIT ?"
     params.append(limit)
 
-    try:
-        return conn.execute(sql, [query, *params]).fetchall()
-    except sqlite3.OperationalError:
-        pass
-    quoted = _quote_terms(query)
+    if operator == "and":
+        try:
+            return conn.execute(sql, [query, *params]).fetchall()
+        except sqlite3.OperationalError:
+            pass
+    quoted = _quote_terms(query, " OR " if operator == "or" else " ")
     if quoted is None:
         return []
     try:
@@ -202,12 +212,12 @@ def format_snippet_plain(s: str) -> str:
     return s.replace(SNIPPET_MARK_START, "").replace(SNIPPET_MARK_END, "")
 
 
-def _rrf(rankings: list[list[int]]) -> dict[int, float]:
+def _rrf(rankings: list[list[int]], k: int = RRF_K) -> dict[int, float]:
     """Reciprocal rank fusion. Input: list of ranked rowid lists. Output: rowid → fused score."""
     scores: dict[int, float] = {}
     for ranked in rankings:
         for rank, rowid in enumerate(ranked, start=1):
-            scores[rowid] = scores.get(rowid, 0.0) + 1.0 / (RRF_K + rank)
+            scores[rowid] = scores.get(rowid, 0.0) + 1.0 / (k + rank)
     return scores
 
 
@@ -219,15 +229,26 @@ def search(
     tags: list[str] | None = None,
     limit: int = 10,
     mode: SearchMode = "hybrid",
+    rrf_k: int = RRF_K,
+    fts_operator: FtsOperator = "and",
 ) -> list[SearchHit]:
-    """Hybrid keyword + semantic retrieval, RRF-fused, category/tag filtered."""
+    """Hybrid keyword + semantic retrieval, RRF-fused, category/tag filtered.
+
+    ``rrf_k`` and ``fts_operator`` exist for the retrieval evals; their
+    defaults are the shipped behaviour.
+    """
+    if fts_operator not in FTS_OPERATORS:
+        raise ValueError(f"fts_operator must be one of {FTS_OPERATORS}, got {fts_operator!r}")
     if not query.strip():
         return []
 
     eligible = _eligible_rowids_subquery(category, tags)
     over_fetch = max(limit * 3, 30)
 
-    fts_rows = _fts_search(conn, query, eligible, over_fetch) if mode in ("hybrid", "fts") else []
+    fts_rows = (
+        _fts_search(conn, query, eligible, over_fetch, fts_operator)
+        if mode in ("hybrid", "fts") else []
+    )
     fts_by_rowid: dict[int, str] = {r[0]: r[3] for r in fts_rows}  # rowid → snippet
     fts_ranked = [r[0] for r in fts_rows]
 
@@ -240,11 +261,11 @@ def search(
         vec_ranked = [r[0] for r in vec_rows]
 
     if mode == "fts":
-        fused = {rowid: 1.0 / (RRF_K + i + 1) for i, rowid in enumerate(fts_ranked)}
+        fused = {rowid: 1.0 / (rrf_k + i + 1) for i, rowid in enumerate(fts_ranked)}
     elif mode == "vec":
-        fused = {rowid: 1.0 / (RRF_K + i + 1) for i, rowid in enumerate(vec_ranked)}
+        fused = {rowid: 1.0 / (rrf_k + i + 1) for i, rowid in enumerate(vec_ranked)}
     else:
-        fused = _rrf([fts_ranked, vec_ranked])
+        fused = _rrf([fts_ranked, vec_ranked], rrf_k)
 
     # Per-retriever rank lookup, 1-indexed. Populated for every fetched
     # rowid regardless of mode; missing means "not in this retriever's window".
