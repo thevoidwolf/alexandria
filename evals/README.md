@@ -238,8 +238,9 @@ These are one-off measurements, to be scripted with the report.
 
 #### Queries and judgements
 
-The queries are Voidwolf's. Write them, one JSON object per line, in
-`data/papers/queries.jsonl`:
+The queries are Voidwolf's, apart from eight paraphrases an LLM drafted
+(how, and why, is in [REPORT.md](REPORT.md)). They are one JSON object per
+line in `data/papers/queries.jsonl`:
 
 ```json
 {"id": "q01", "text": "FormatSpread", "type": "lookup", "author": "human"}
@@ -252,15 +253,22 @@ The queries are Voidwolf's. Write them, one JSON object per line, in
   - `no-answer`: something the set can't answer.
 - `author` is `human`, or `llm-draft` for a query an LLM drafted. LLM-drafted
   queries tend to reuse the source's wording, which favours keyword search,
-  so they are reported separately.
+  so they are reported separately. They also stand in for the queries an
+  agent sends Alexandria, which a person never sees.
 
-A suggested mix for 50: 15 `lookup`, 15 `paraphrase`, 15 `conceptual`, 5
-`no-answer`, with lengths spread from one or two words to full sentences
-(the AND-versus-OR comparison and the zero-hit-by-length analysis need both).
-Write them before looking at what search returns for them.
+The set has 43 queries: 19 `lookup`, 12 `paraphrase`, 7 `conceptual` and 5
+`no-answer`, 35 of them `human` and 8 `llm-draft`. Their lengths run from
+one word to full sentences, because the AND-versus-OR comparison and the
+zero-hit-by-length analysis need both. They were written before anything
+was run on them; a query added later should be too.
 
 Judgements live in `data/papers/qrels.tsv` (`query_id <TAB> arxiv_id <TAB>
-grade`), written by `judge.py`:
+grade`). Each `lookup` and `paraphrase` was written for one paper, and that
+paper is graded 2 in advance, so the judge doesn't ask about it. Without
+those grades, a query whose target no variant found, and which turned up
+nothing else relevant, would have no relevant papers, so it would drop out
+of every mean instead of scoring 0. The rest of the grades come from
+`judge.py`:
 
 1. `uv run python -m evals.run --dataset papers --variants all` runs every
    variant, so there is something to pool. Its scores are blank until
@@ -288,8 +296,9 @@ When phase 4 adds variants, steps 1–3 repeat and only the new pairs are
 asked. Results from an index other than the current one are refused,
 because their passages would be wrong. With the three baselines, queries
 in two smoke tests pooled 10 to 12 papers each (FTS adds a few beyond what
-vector search returns, mostly for short lookups), so 50 queries would be
-roughly 500 to 600 grades; every new variant adds the papers only it found.
+vector search returns, mostly for short lookups), so the 43 queries come to
+roughly 400 to 500 grades after the 31 given in advance; every new variant
+adds the papers only it found.
 
 Papers no variant returned are never judged and count as not relevant.
 That biases scores in two ways. Recall is overstated, because relevant

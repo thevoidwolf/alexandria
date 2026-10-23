@@ -65,3 +65,54 @@ Recorded before any papers-set results exist.
   definition was frozen. The same scratch run tried `vec` with BGE's query
   instruction (0.713, below plain `vec`'s 0.720). Neither number has
   tuned anything. Both are re-measured as committed variants in phase 4.
+- **2026-10-23: each `lookup` and `paraphrase` has its target paper graded
+  2 before judging** (31 grades in `qrels.tsv`), on Voidwolf's call. Pooled
+  judging only grades papers some variant returned. So a query whose
+  target every variant missed, and which turned up nothing else relevant,
+  would have no relevant papers and be left out of every mean. The misses
+  that matter most would vanish instead of scoring 0. Those 31 pairs aren't
+  graded blind; they are relevant because the query was written for them.
+- **2026-10-23: eight `paraphrase` queries are LLM-drafted**, marked
+  `llm-draft`. Voidwolf's notes had four paraphrases against a target of
+  about twelve. A mix also matches how Alexandria is used, since agents
+  query it as well as people.
+  - *Papers:* the 20 with no `lookup` or `paraphrase` written for them,
+    sorted by arXiv id, sampled with `random.Random(0).sample(pool, 8)`:
+    BEIR, ALCE, C-Pack, SWE-bench, Control Illusion, When Reject Turns into
+    Accept, Health-ORSC-Bench, Passing the Test You Trained On.
+  - *Drafter:* a fresh Claude Opus 5.5 subagent with none of this project's
+    context: not the hypotheses, the search code or the other queries. It
+    got a file of each paper's title and abstract, taken from the pinned
+    PDF, and this prompt (the file's path elided):
+
+    > You are helping build a test set for a personal search tool. Someone
+    > keeps a private library of research-paper PDFs and searches it by
+    > typing queries. We need search queries to test it with.
+    >
+    > Read the one file `<titles and abstracts>` with the Read tool. It
+    > holds 8 papers, each as `[arXiv id] title` followed by the abstract.
+    > Use no other tools and no other sources: don't search, don't open
+    > other files, don't look anything up.
+    >
+    > For each paper, write one query of this type:
+    >
+    >   paraphrase: one paper's idea in words different from the paper's.
+    >
+    > Write it the way the library's owner would type it into the search
+    > box: someone who read the paper a while ago, remembers the idea, and
+    > wants to find it again. One query per paper, 8 in all.
+    >
+    > Reply with only 8 lines of JSON, one per paper, in the order the file
+    > lists them, like:
+    > {"paper": "2104.08663", "text": "..."}
+
+    Its eight lines are used unedited.
+  - *Caveat:* all eight drafts are 17 to 22 words long, while the human
+    queries run from 1 to 13 words. Any human-against-LLM comparison is
+    therefore also a comparison of lengths and of papers, and is reported
+    as description only.
+- **2026-10-23: two of Voidwolf's notes were corrected against the pinned
+  papers' text** before any run, by reading the papers, not by searching
+  them. The RuLES lookup said 15 scenarios; the pinned v3 says 14. A ReAct
+  lookup's placeholder became the name from the paper's worked example,
+  "Arthur's Magazine was started in 1844".

@@ -1,0 +1,43 @@
+{"id": "q01", "text": "paper that used 14 text based scenarios for rules", "type": "lookup", "author": "human"}
+{"id": "q02", "text": "3k expert judgements", "type": "lookup", "author": "human"}
+{"id": "q03", "text": "self enhancement bias", "type": "lookup", "author": "human"}
+{"id": "q04", "text": "BIPIA benchmark", "type": "lookup", "author": "human"}
+{"id": "q05", "text": "Pearson coefficients of 0.6423", "type": "lookup", "author": "human"}
+{"id": "q06", "text": "Degeneration of Thought", "type": "lookup", "author": "human"}
+{"id": "q07", "text": "76 points for LLaMA-2-13B", "type": "lookup", "author": "human"}
+{"id": "q08", "text": "collect 4k-20k supervised training data", "type": "lookup", "author": "human"}
+{"id": "q09", "text": "Spearman correlation of 0.514", "type": "lookup", "author": "human"}
+{"id": "q10", "text": "outperform TF-IDF/BM25", "type": "lookup", "author": "human"}
+{"id": "q11", "text": "high ASR of 24%", "type": "lookup", "author": "human"}
+{"id": "q12", "text": "50 Wikipedia pages covering events", "type": "lookup", "author": "human"}
+{"id": "q13", "text": "Arthur's Magazine was started in 1844", "type": "lookup", "author": "human"}
+{"id": "q14", "text": "batch size 32 and k equal to the number of different labels", "type": "lookup", "author": "human"}
+{"id": "q15", "text": "64,000 predictions using the 1-100 scale", "type": "lookup", "author": "human"}
+{"id": "q16", "text": "SysBench", "type": "lookup", "author": "human"}
+{"id": "q17", "text": "AgentDojo", "type": "lookup", "author": "human"}
+{"id": "q18", "text": "ColBERTv2", "type": "lookup", "author": "human"}
+{"id": "q19", "text": "Ragas", "type": "lookup", "author": "human"}
+{"id": "q20", "text": "models evaluating models unfairly", "type": "paraphrase", "author": "human"}
+{"id": "q21", "text": "more capable models are easier to trick with instructions hidden in documents", "type": "paraphrase", "author": "human"}
+{"id": "q22", "text": "getting models to argue so one doesn't get stuck on its first answer", "type": "paraphrase", "author": "human"}
+{"id": "q23", "text": "best format for one model isn't best for another", "type": "paraphrase", "author": "human"}
+{"id": "q24", "text": "testing search models on lots of different datasets they never trained on, where plain keyword matching turns out hard to beat", "type": "paraphrase", "author": "llm-draft"}
+{"id": "q25", "text": "getting chatbots to point to sources for each claim in their answer and automatically checking whether the references actually back it up", "type": "paraphrase", "author": "llm-draft"}
+{"id": "q26", "text": "big open release of Chinese sentence vector models along with training data and a leaderboard to compare them", "type": "paraphrase", "author": "llm-draft"}
+{"id": "q27", "text": "can AI fix real bug reports from open source python projects by patching the repo, almost none get solved", "type": "paraphrase", "author": "llm-draft"}
+{"id": "q28", "text": "models don't reliably obey the developer's prompt over the user's when they conflict, appeals to authority sway them more", "type": "paraphrase", "author": "llm-draft"}
+{"id": "q29", "text": "hiding invisible text in a submitted manuscript to trick AI reviewers into flipping a rejection to acceptance", "type": "paraphrase", "author": "llm-draft"}
+{"id": "q30", "text": "medical chatbots turning down harmless health questions too often instead of giving a careful general answer to borderline ones", "type": "paraphrase", "author": "llm-draft"}
+{"id": "q31", "text": "small classifiers that flag malicious instructions in tool results look good on public test sets but fall apart inside real agent runs", "type": "paraphrase", "author": "llm-draft"}
+{"id": "q32", "text": "comparison to human judgement", "type": "conceptual", "author": "human"}
+{"id": "q33", "text": "alignment methods on rule following", "type": "conceptual", "author": "human"}
+{"id": "q34", "text": "risks when an agent reads outside content like emails or web pages", "type": "conceptual", "author": "human"}
+{"id": "q35", "text": "how do subtle changes in a prompt affect model sensitivity", "type": "conceptual", "author": "human"}
+{"id": "q36", "text": "self reflection in large language models", "type": "conceptual", "author": "human"}
+{"id": "q37", "text": "improving on BM25 retrieval", "type": "conceptual", "author": "human"}
+{"id": "q38", "text": "automated evaluation of RAG systems", "type": "conceptual", "author": "human"}
+{"id": "q39", "text": "ai used in air traffic control situations to improve outcomes", "type": "no-answer", "author": "human"}
+{"id": "q40", "text": "physics solutions for agent alignment", "type": "no-answer", "author": "human"}
+{"id": "q41", "text": "river ecology datasets as standard controls", "type": "no-answer", "author": "human"}
+{"id": "q42", "text": "agent concerns in health care consent and consultation", "type": "no-answer", "author": "human"}
+{"id": "q43", "text": "test cases involving parental controls of contents", "type": "no-answer", "author": "human"}
