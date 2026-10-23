@@ -42,7 +42,12 @@ Recorded before any papers-set results exist.
   chunks, 50-word overlap), on Voidwolf's call: a 400-word chunk is still
   about 630 bge tokens on SciFact's text, over the 512-token window, so it
   wouldn't test chunks that fit. `hybrid-c200` (200/40) stays. The 50-word
-  overlap for c300 was chosen to sit between c400's 50 and c200's 40.
+  overlap for c300 (17% of the chunk) was chosen to sit between c400's
+  12.5% and c200's 20%.
+  - *Measured afterwards, on the papers set:* its text averages 1.77 bge
+    tokens per word, so 300-word chunks still overflow 512 tokens 37.6% of
+    the time (200-word chunks 8.3%). Reported to Voidwolf; c300 stands unless
+    he changes it, and any change is recorded here before papers results.
 - **2026-10-23: the `fts-or` / `hybrid-or` definition is frozen** as used in
   a scratch SciFact run on the same day, and won't change before the papers
   results:

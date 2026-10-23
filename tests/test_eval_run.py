@@ -204,3 +204,8 @@ def test_table_renders_before_anything_is_judged(tiny, tmp_path, fake_embed):
 
     empty = Dataset(name="none", docs=tiny.docs, queries={}, qrels={})
     ev_run.format_table(summarize(empty, {"hybrid": []}, {"hybrid": {}}))
+
+
+def test_rows_record_the_query_text_they_were_run_with(tiny, tmp_path, fake_embed):
+    rows = {r["query_id"]: r for r in _run(tiny, tmp_path, mode="fts")}
+    assert rows["q1"]["query"] == "water bill"

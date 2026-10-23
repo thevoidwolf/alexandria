@@ -171,3 +171,59 @@ def test_results_from_a_different_index_are_refused():
         check_fresh({"hybrid": {"index": {"key": "tiny-0000"}}}, {"hybrid": "tiny-1111"})
     with pytest.raises(ValueError, match="hybrid"):
         check_fresh({}, {"hybrid": "tiny-1111"})          # rows on disk but no summary entry
+
+
+# ------------------------------------------------------------ review fixes
+
+def test_a_grade_appended_after_a_hand_edit_stays_on_its_own_line(tmp_path):
+    from evals.datasets.papers import _read_qrels
+    from evals.judge import append_grade
+
+    path = tmp_path / "qrels.tsv"
+    path.write_text("q1\t2311.04235\t2")                 # an editor dropped the final newline
+    append_grade(path, "q1", "2104.08663", 0)
+    queries = {"q1": "x"}
+    papers_ = {"2311.04235": "a", "2104.08663": "b"}
+    assert _read_qrels(path, queries, papers_) == {"q1": {"2311.04235": 2, "2104.08663": 0}}
+
+
+def test_judge_shows_the_passage_that_has_the_query_words():
+    texts = {("v-one", 0): "nothing to see here " * 30, ("v-two", 4): "the alpha result " * 3}
+    shown = []
+    judge([Pair("q1", "a", (("v-one", 0), ("v-two", 4)))],
+          query_text={"q1": "alpha"}, title={"a": "A"},
+          chunk_text=lambda v, d, o: texts[(v, o)],
+          ask=lambda p: "1", show=shown.append, record=lambda p, g: None)
+    assert "the alpha result" in "\n".join(shown)     # not just the query line
+
+
+def test_judge_does_not_reveal_how_many_retrievers_found_a_paper():
+    texts = {("v-one", 0): "alpha one", ("v-two", 1): "alpha two"}
+    pairs = [Pair("q1", "a", (("v-one", 0), ("v-two", 1))), Pair("q1", "b", (("v-one", 0),))]
+    shown = []
+    judge(pairs, query_text={"q1": "alpha"}, title={"a": "A", "b": "B"},
+          chunk_text=lambda v, d, o: texts[(v, o)],
+          ask=lambda p, it=iter(["m", "1", "m", "1"]): next(it), show=shown.append, record=lambda p, g: None)
+    out = "\n".join(shown)
+    assert "passage 1" not in out and "of 2 ---" not in out
+    assert "alpha two" not in out or "alpha one" not in out     # one passage per paper
+
+
+def test_whole_passage_view_is_capped_so_length_cannot_reveal_chunk_size():
+    long_chunk = " ".join(f"w{i}" for i in range(800))
+    shown = []
+    judge([Pair("q1", "a", (("v", 0),))], query_text={"q1": "w5"}, title={"a": "A"},
+          chunk_text=lambda v, d, o: long_chunk,
+          ask=lambda p, it=iter(["m", "1"]): next(it), show=shown.append, record=lambda p, g: None)
+    longest = max(len(line.split()) for text in shown for line in text.splitlines())
+    assert longest <= 202                      # 200 words plus the ellipsis markers
+
+
+def test_results_for_reworded_queries_are_refused():
+    from evals.judge import check_queries
+
+    rows = {"hybrid": [{"query_id": "q1", "query": "old wording"},
+                       {"query_id": "q2", "query": "same"}]}
+    check_queries(rows, {"q1": "old wording", "q2": "same"})
+    with pytest.raises(ValueError, match="q1"):
+        check_queries(rows, {"q1": "new wording", "q2": "same"})

@@ -1,7 +1,8 @@
 """A public set of arXiv papers on agents, evals, retrieval and instruction-following.
 
-    uv run python -m evals.datasets.papers            # fetch, verify, pin
-    uv run python -m evals.datasets.papers --update   # re-pin to the latest versions
+    uv run python -m evals.datasets.papers                   # fetch, verify, pin
+    uv run python -m evals.datasets.papers --update 2104.08663   # re-pin one paper
+    uv run python -m evals.datasets.papers --update          # re-pin every paper
 
 Committed, in ``evals/data/papers/``:
 
@@ -23,12 +24,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 import time
 import unicodedata
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,6 +47,7 @@ QUERY_TYPES = ("lookup", "paraphrase", "conceptual", "no-answer")
 QUERY_AUTHORS = ("human", "llm-draft")
 
 _ID = re.compile(r"\d{4}\.\d{4,5}")
+_QUERY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _ABS_ID = re.compile(r"arxiv\.org/abs/(?P<id>\d{4}\.\d{4,5})v(?P<v>\d+)$")
 _ATOM = "{http://www.w3.org/2005/Atom}"
 
@@ -146,8 +149,12 @@ def _read_queries(path: Path) -> tuple[dict[str, str], dict[str, dict]]:
         if not isinstance(q, dict):
             raise ValueError(f"{where}: expected a JSON object")
         qid, text = q.get("id"), q.get("text")
-        if not isinstance(qid, str) or not qid.strip():
-            raise ValueError(f"{where}: needs a non-empty string id")
+        if not isinstance(qid, str) or not _QUERY_ID.fullmatch(qid):
+            # Ids end up in qrels.tsv: no spaces, tabs or slashes.
+            raise ValueError(
+                f"{where}: id must be letters, digits, '.', '_' or '-', starting with a "
+                f"letter or digit; got {qid!r}"
+            )
         if qid in queries:
             raise ValueError(f"{where}: id {qid!r} is used twice")
         if not isinstance(text, str) or not text.strip():
@@ -228,19 +235,25 @@ def fetch(
     *,
     http_get: Callable[[str], bytes] | None = None,
     sleep: Callable[[float], None] = time.sleep,
-    update: bool = False,
+    update: bool | Iterable[str] = False,
+    write_lock: bool = True,
 ) -> dict[str, dict]:
     """Verify every paper against arXiv, download missing PDFs, write the lock.
 
-    Pinned papers are checked at their locked version; ``update`` re-resolves
-    every paper to its latest version instead. Raises ``FetchError`` listing
-    every problem, without touching the lock, if anything doesn't check out.
+    Pinned papers are checked at their locked version. ``update`` re-resolves
+    papers to their latest version instead: ``True`` for all of them, or an
+    iterable of ids for just those. Raises ``FetchError`` listing every
+    problem, without touching the lock, if anything doesn't check out.
+    ``write_lock=False`` checks and downloads but never writes the lock.
     """
     labels = read_papers(data_dir / "papers.tsv")
     lock_path = data_dir / LOCK_NAME
     old = _read_lock(lock_path)
+    repin = set(labels) if update is True else set(update or ())
+    if unknown := sorted(repin - set(labels)):
+        raise ValueError(f"can't update papers that aren't in papers.tsv: {', '.join(unknown)}")
     get = http_get or _http_get()
-    pinned = {} if update else {i: old[i]["version"] for i in labels if i in old}
+    pinned = {i: old[i]["version"] for i in labels if i in old and i not in repin}
 
     ids = [f"{i}v{pinned[i]}" if i in pinned else i for i in labels]
     entries = parse_atom(get(f"{API_URL}?id_list={','.join(ids)}&max_results={len(ids)}"))
@@ -276,25 +289,33 @@ def fetch(
             except httpx.HTTPError as err:
                 problems.append(f"{i}v{e.version}: PDF download failed ({err})")
                 continue
+        where = f"the cached copy {path}" if cached else "arXiv's copy"
+        fix = "; delete it to re-download" if cached else ""
         if not data.startswith(b"%PDF"):
-            problems.append(f"{i}v{e.version}: what arXiv sent is not a PDF")
+            problems.append(f"{i}v{e.version}: {where} is not a PDF{fix}")
+            continue
+        if b"%%EOF" not in data[-2048:]:
+            problems.append(f"{i}v{e.version}: {where} looks truncated (no %%EOF at the end){fix}")
             continue
         sha = hashlib.sha256(data).hexdigest()
         if i in pinned and sha != old[i]["sha256"]:
-            where = f"the cached copy {path}" if cached else "arXiv's copy"
             problems.append(
                 f"{i}v{e.version}: sha256 of {where} is {sha[:12]}…, the lock says "
                 f"{old[i]['sha256'][:12]}…; delete a bad cached copy, or check the paper and "
-                "rerun with --update to re-pin it"
+                f"rerun with `--update {i}` to re-pin just this paper"
             )
             continue
         if not cached:
-            path.write_bytes(data)
+            # Write beside and rename, so an interrupted write never leaves a
+            # partial PDF at the path a later run would trust.
+            part = path.with_name(path.name + ".part")
+            part.write_bytes(data)
+            os.replace(part, path)
         lock[i] = {"version": e.version, "title": e.title, "authors": list(e.authors), "sha256": sha}
     if problems:
         raise FetchError(problems)
 
-    if lock != old:
+    if write_lock and lock != old:
         lock_path.write_text(json.dumps(lock, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
                              encoding="utf-8")
     return lock
@@ -317,7 +338,8 @@ def load(cache_dir: Path, data_dir: Path = DATA_DIR) -> Dataset:
         return cache_dir / "papers" / f"{i}v{lock[i]['version']}.pdf"
 
     if any(not pdf(i).exists() for i in labels):
-        fetch(data_dir, cache_dir, http_get=_http_get(), sleep=time.sleep)
+        # Only fills the cache: an eval run never rewrites the committed lock.
+        fetch(data_dir, cache_dir, http_get=_http_get(), sleep=time.sleep, write_lock=False)
 
     docs: dict[str, str | bytes] = {}
     for i in labels:
@@ -344,12 +366,14 @@ def main(argv: list[str] | None = None) -> None:
         prog="python -m evals.datasets.papers",
         description="Fetch the arXiv papers set, check it against papers.tsv and pin it.",
     )
-    p.add_argument("--update", action="store_true",
-                   help="re-resolve every paper to its latest arXiv version and re-pin")
+    p.add_argument("--update", nargs="*", metavar="ID",
+                   help="re-pin these papers (or, with no ids, every paper) to their latest "
+                        "arXiv version")
     p.add_argument("--cache", type=Path, default=DATA_DIR.parents[1] / ".cache")
     args = p.parse_args(argv)
     try:
-        lock = fetch(DATA_DIR, args.cache, update=args.update)
+        update = True if args.update == [] else (args.update or False)
+        lock = fetch(DATA_DIR, args.cache, update=update)
     except (FetchError, ValueError) as e:
         problems = e.problems if isinstance(e, FetchError) else [str(e)]
         print(f"papers set NOT fetched: {len(problems)} problem(s)", file=sys.stderr)

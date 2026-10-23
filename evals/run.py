@@ -74,6 +74,7 @@ def run_variant(ds: Dataset, v: Variant, built: BuiltIndex) -> list[dict]:
             }
             rows.append({
                 "query_id": qid,
+                "query": text,
                 "variant": v.name,
                 "mode": v.mode,
                 "n_words": len(text.split()),

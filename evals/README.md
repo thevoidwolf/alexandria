@@ -212,8 +212,10 @@ stops, listing every problem and leaving the lock alone, if:
   [`papers.lock.json`](data/papers/papers.lock.json), which records the
   version, exact title, authors and hash of each paper.
 
-Later fetches use the pinned versions; `--update` re-pins every paper to its
-latest version.
+Later fetches use the pinned versions. If arXiv re-renders a PDF (same
+version, different bytes), check it and re-pin just that paper with
+`--update <id>`; a bare `--update` re-pins every paper, which changes the
+corpus every committed result was measured on.
 
 Labels are short names, not titles, so "matches" is defined: every word of
 the label, or of a note in parentheses, appears in the title, ignoring
@@ -265,22 +267,36 @@ grade`), written by `judge.py`:
    there are judgements.
 2. `uv run python -m evals.judge` pools each query's top 10 papers from
    every variant run so far and shuffles them. For each unjudged pair it
-   shows the query, the paper's title and the retrieved passage (`m` for
-   the whole passage), never the variant or rank. Grade 2 if the paper is
+   shows the query, the paper's title and an 80-word stretch of a
+   retrieved passage (`m` for 200 words of it). It never shows the variant,
+   the rank, or how many variants found the paper, and the 200-word cap is
+   the smallest chunk size any variant uses, so a passage's length can't
+   give a chunk-size variant away. Grade 2 if the paper is
    what the query is looking for, 1 if it addresses the query, 0 if not:
    the grade is for the paper, and the passage is evidence. Every grade is
    saved as it's given, so quit (`q`) whenever; the next session resumes.
+   Run one session at a time.
 3. Run `evals.run` again to score.
+
+To fix a mis-keyed grade, delete its line from `qrels.tsv` and run the judge
+again; it asks for that pair again. Rewording a query after its results
+were produced makes the judge refuse them until `evals.run` is re-run, and
+rewording one that's already judged would leave its old grades attached:
+give it a new id instead.
 
 When phase 4 adds variants, steps 1–3 repeat and only the new pairs are
 asked. Results from an index other than the current one are refused,
-because their passages would be wrong. With the three baselines, each
-query in a three-query smoke test pooled exactly 10 papers (FTS adds little
-beyond what vector search returns), so 50 queries would be about 500
-grades; every new variant adds the papers only it found.
-Papers no variant returned are never judged and count as not relevant:
-pooled judgements are biased against a retriever that finds relevant
-papers nobody else does.
+because their passages would be wrong. With the three baselines, queries
+in two smoke tests pooled 10 to 12 papers each (FTS adds a few beyond what
+vector search returns, mostly for short lookups), so 50 queries would be
+roughly 500 to 600 grades; every new variant adds the papers only it found.
+
+Papers no variant returned are never judged and count as not relevant.
+That biases scores in two ways. Recall is overstated, because relevant
+papers no variant found are missing from its denominator. And a variant
+scored before its own new pairs are judged (a newly added variant, or a
+judging session stopped halfway) has those papers counted as not relevant.
+The second goes away by judging before scoring.
 
 The loader checks both files on every run and names the line of any unknown
 type or author, duplicate id, empty query, judgement for an unknown query

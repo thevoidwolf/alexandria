@@ -303,3 +303,69 @@ def test_no_committed_label_matches_a_different_paper():
     clashes = [(labels[i], j) for i in labels for j in lock
                if j != i and label_matches(labels[i], lock[j]["title"], lock[j]["authors"])]
     assert clashes == []
+
+
+# ------------------------------------------------------------ review fixes
+
+def test_update_can_repin_one_paper_and_leave_the_rest(data_dir, cache):
+    fetch(data_dir, cache, http_get=FakeArxiv(TABLE), sleep=_no_sleep)
+    newer = {
+        "2311.04235": TABLE["2311.04235"] + [
+            {"title": "Can LLMs Follow Simple Rules?", "authors": ["Norman Mu"], "pdf": _pdf("rules v3")}],
+        "2104.08663": TABLE["2104.08663"] + [{**TABLE["2104.08663"][0], "pdf": _pdf("beir v2")}],
+    }
+    lock = fetch(data_dir, cache, http_get=FakeArxiv(newer), sleep=_no_sleep, update=["2311.04235"])
+    assert lock["2311.04235"]["version"] == 3
+    assert lock["2104.08663"]["version"] == 1
+
+
+def test_update_of_a_paper_not_in_the_set_is_refused(data_dir, cache):
+    with pytest.raises(ValueError, match="2210.07316"):
+        fetch(data_dir, cache, http_get=FakeArxiv(TABLE), sleep=_no_sleep, update=["2210.07316"])
+
+
+def test_sha_mismatch_advice_names_a_single_paper_update(data_dir, cache):
+    fetch(data_dir, cache, http_get=FakeArxiv(TABLE), sleep=_no_sleep)
+    (cache / "papers" / "2104.08663v1.pdf").unlink()
+    regenerated = {**TABLE, "2104.08663": [{**TABLE["2104.08663"][0], "pdf": _pdf("re-rendered")}]}
+    with pytest.raises(FetchError) as err:
+        fetch(data_dir, cache, http_get=FakeArxiv(regenerated), sleep=_no_sleep)
+    assert "--update 2104.08663" in err.value.problems[0]
+
+
+def test_truncated_download_is_neither_cached_nor_pinned(data_dir, cache):
+    cut = {**TABLE, "2104.08663": [{**TABLE["2104.08663"][0], "pdf": _pdf("beir v1")[:-7]}]}
+    with pytest.raises(FetchError) as err:
+        fetch(data_dir, cache, http_get=FakeArxiv(cut), sleep=_no_sleep)
+    assert any("2104.08663" in p and "truncated" in p for p in err.value.problems)
+    assert not (cache / "papers" / "2104.08663v1.pdf").exists()
+    assert not (data_dir / "papers.lock.json").exists()
+
+
+def test_an_interrupted_write_leaves_no_pdf_behind(data_dir, cache, monkeypatch):
+    def interrupted(src, dst):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(papers.os, "replace", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        fetch(data_dir, cache, http_get=FakeArxiv(TABLE), sleep=_no_sleep)
+    assert not list((cache / "papers").glob("*.pdf"))
+
+
+def test_loading_never_rewrites_the_lock(fetched, cache, monkeypatch):
+    before = (fetched / "papers.lock.json").read_bytes()
+    (cache / "papers" / "2311.04235v2.pdf").unlink()
+    # arXiv's author metadata drifted; the pinned version, title and bytes didn't
+    drifted = {**TABLE, "2311.04235": [
+        {**v, "authors": ["Norman Mu", "Sarah Chen"]} for v in TABLE["2311.04235"]]}
+    monkeypatch.setattr(papers, "_http_get", lambda: FakeArxiv(drifted))
+    monkeypatch.setattr(papers.time, "sleep", _no_sleep)
+    load(cache, data_dir=fetched)
+    assert (fetched / "papers.lock.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("qid", ["q1 ", " q1", "q\t1", "q/1", "-q1"])
+def test_query_ids_are_plain_names(fetched, cache, qid):
+    _write_queries(fetched, {**Q1, "id": qid})
+    with pytest.raises(ValueError, match="line 1.*id"):
+        load(cache, data_dir=fetched)
