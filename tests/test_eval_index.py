@@ -1,4 +1,7 @@
 """Eval indexes: one throwaway Alexandria home per (corpus, settings), cached."""
+from dataclasses import replace
+from pathlib import Path
+
 import pytest
 
 from evals import index as ev_index
@@ -13,6 +16,7 @@ from evals.index import (
 )
 
 SMALL = IndexSettings(chunk_tokens=50, chunk_overlap=10)
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(autouse=True)
@@ -136,3 +140,29 @@ def test_key_changes_when_the_model_revision_moves(tiny, model_rev):
 def test_build_records_the_model_revision(tiny, tmp_path, fake_embed, model_rev):
     model_rev["value"] = "5c38ec7"
     assert build_index(tiny, SMALL, tmp_path / "cache").stats["embed_revision"] == "5c38ec7"
+
+
+def test_byte_documents_go_in_through_the_upload_path_as_pdfs(tmp_path, fake_embed):
+    ds = Dataset(
+        name="pdfs", docs={"p1": (FIXTURES / "paper.pdf").read_bytes()},
+        queries={}, qrels={}, doc_suffix=".pdf",
+    )
+    built = build_index(ds, SMALL, tmp_path / "cache")
+    cfg, conn = open_index(built)
+    try:
+        content_type, extractor = conn.execute(
+            "SELECT content_type, extractor FROM documents").fetchone()
+        source = conn.execute("SELECT source_kind, source_uri FROM document_sources").fetchone()
+    finally:
+        conn.close()
+    assert content_type == "pdf"
+    assert extractor.startswith("pypdf")
+    assert source == ("upload", "upload:p1.pdf")
+
+
+def test_pdf_backend_is_pinned_in_the_index_config(tiny, tmp_path, fake_embed):
+    built = build_index(tiny, replace(SMALL, pdf_backend="auto"), tmp_path / "cache")
+    cfg, conn = open_index(built)
+    conn.close()
+    assert cfg.extractors.pdf.backend == "auto"
+    assert index_key(tiny, SMALL) != index_key(tiny, replace(SMALL, pdf_backend="auto"))

@@ -3,8 +3,9 @@
 Each index lives in ``<cache_root>/<key>/home`` and is opened with an
 explicit home, so the user's own corpus (``ALEXANDRIA_HOME`` or the XDG
 default) is never read or written. Documents go in through
-``ingest_fetched`` exactly as ``store_document_tool`` sends them, so what
-is measured is the real extract/normalize/chunk/embed pipeline.
+``ingest_fetched``: text exactly as ``store_document_tool`` sends it, bytes
+(PDFs) exactly as a web upload does, so what is measured is the real
+extract/normalize/chunk/embed pipeline.
 
 The cache key covers the corpus, the settings, the embedding model's Hub
 revision and the source of the ingest code, so an ingest fix or a moved
@@ -41,6 +42,7 @@ class IndexSettings:
     embed_dim: int = 384
     chunk_tokens: int = 800
     chunk_overlap: int = 100
+    pdf_backend: str = "pypdf"
 
 
 @dataclass
@@ -79,8 +81,10 @@ def index_key(ds: Dataset, s: IndexSettings) -> str:
         {"dataset": ds.name, "embed_revision": model_revision(s.embed_model), **asdict(s)},
         sort_keys=True,
     ).encode())
+    h.update(ds.doc_suffix.encode() + b"\0")
     for doc_id in sorted(ds.docs):
-        h.update(doc_id.encode() + b"\0" + ds.docs[doc_id].encode() + b"\0")
+        body = ds.docs[doc_id]
+        h.update(doc_id.encode() + b"\0" + (body if isinstance(body, bytes) else body.encode()) + b"\0")
     h.update(_code_fingerprint())
     return f"{ds.name}-{h.hexdigest()[:16]}"
 
@@ -94,7 +98,9 @@ def _write_config(home: Path, s: IndexSettings) -> None:
         f"tokens = {s.chunk_tokens}\n"
         f"overlap = {s.chunk_overlap}\n\n"
         "[storage]\n"
-        "keep_blobs = false\n"
+        "keep_blobs = false\n\n"
+        "[extractors.pdf]\n"
+        f"backend = {json.dumps(s.pdf_backend)}\n"
     )
 
 
@@ -121,12 +127,14 @@ def build_index(ds: Dataset, s: IndexSettings, cache_root: Path) -> BuiltIndex:
     start = time.perf_counter()
     try:
         for ds_id in sorted(ds.docs):
-            name = f"{ds_id}.txt"
+            body = ds.docs[ds_id]
+            name = f"{ds_id}{ds.doc_suffix}"
+            if isinstance(body, bytes):
+                fetched = Fetched(body, "upload", f"upload:{name}")
+            else:
+                fetched = Fetched(body.encode("utf-8"), "mcp", f"mcp:{name}")
             try:
-                r = ingest_fetched(
-                    Fetched(ds.docs[ds_id].encode("utf-8"), "mcp", f"mcp:{name}"),
-                    conn, cfg, filename_hint=name,
-                )
+                r = ingest_fetched(fetched, conn, cfg, filename_hint=name)
             except ValueError as e:  # e.g. no extractable text
                 failed[ds_id] = str(e)
                 continue
