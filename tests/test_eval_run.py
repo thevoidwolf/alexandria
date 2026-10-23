@@ -300,3 +300,71 @@ def test_summary_records_each_variants_search_settings(tiny, tmp_path, fake_embe
         "model": "BAAI/bge-reranker-base", "revision": "test-rerank-rev", "top_n": 50}
     again = _main(tiny, tmp_path, monkeypatch, [Variant("hybrid", index=SMALL)])
     assert again["variants"]["hybrid+rerank"]["search"] == summary["variants"]["hybrid+rerank"]["search"]
+
+
+# ------------------------------------------------------------ rescoring
+
+def _main_args(tmp_path, *extra):
+    return ["--dataset", "tiny", "--out", str(tmp_path / "results"),
+            "--cache", str(tmp_path / "cache"), *extra]
+
+
+def _no_search(monkeypatch):
+    def refuse(*a, **kw):
+        raise AssertionError("rescoring must not search")
+    monkeypatch.setattr(ev_run, "search", refuse)
+
+
+def test_rescore_rescores_the_rows_on_disk_without_searching(tiny, tmp_path, fake_embed,
+                                                             monkeypatch):
+    variants = [Variant("fts", mode="fts", index=SMALL), Variant("hybrid", index=SMALL)]
+    first = _main(tiny, tmp_path, monkeypatch, variants)
+    rows_before = (tmp_path / "results" / "tiny" / "hybrid.jsonl").read_text().splitlines()
+
+    graded = Dataset(**{**tiny.__dict__, "qrels": {**tiny.qrels, "q3": {"a": 2}}})
+    monkeypatch.setitem(ev_run.DATASETS, "tiny", lambda cache_dir: graded)
+    monkeypatch.setattr(ev_run, "environment", lambda: {"alexandria_commit": "elsewhere"})
+    _no_search(monkeypatch)
+    ev_run.main(_main_args(tmp_path, "--rescore"))
+
+    again = json.loads((tmp_path / "results" / "tiny" / "summary.json").read_text())
+    assert again["variants"]["hybrid"]["metrics"]["ndcg@10"]["n"] == \
+        first["variants"]["hybrid"]["metrics"]["ndcg@10"]["n"] + 1      # q3 now counts
+    rows_after = (tmp_path / "results" / "tiny" / "hybrid.jsonl").read_text().splitlines()
+    before = {json.loads(r)["query_id"]: json.loads(r) for r in rows_before}
+    after = {json.loads(r)["query_id"]: json.loads(r) for r in rows_after}
+    assert after["q3"]["ndcg@10"] is not None and before["q3"]["ndcg@10"] is None
+    for q in after:                     # the search side is untouched
+        assert {k: v for k, v in after[q].items() if k not in ev_run.METRICS} == \
+               {k: v for k, v in before[q].items() if k not in ev_run.METRICS}
+    for name in ("fts", "hybrid"):      # credited to the run that searched, not this one
+        assert again["variants"][name]["environment"] == first["variants"][name]["environment"]
+        assert again["variants"][name]["latency_ms"] == first["variants"][name]["latency_ms"]
+
+
+def test_rescore_refuses_rows_for_a_changed_query_set(tiny, tmp_path, fake_embed, monkeypatch):
+    _main(tiny, tmp_path, monkeypatch, [Variant("hybrid", index=SMALL)])
+    for queries in ({**tiny.queries, "q1": "water bills"},       # reworded
+                    {**tiny.queries, "q4": "new question"}):      # added
+        changed = Dataset(**{**tiny.__dict__, "queries": queries})
+        monkeypatch.setitem(ev_run.DATASETS, "tiny", lambda cache_dir, ds=changed: ds)
+        _no_search(monkeypatch)
+        with pytest.raises(SystemExit, match="hybrid.*without --rescore"):
+            ev_run.main(_main_args(tmp_path, "--rescore"))
+
+
+def test_rescore_refuses_rows_from_another_index(tiny, tmp_path, fake_embed, monkeypatch):
+    _main(tiny, tmp_path, monkeypatch, [Variant("hybrid", index=SMALL)])
+    other = IndexSettings(chunk_tokens=40, chunk_overlap=10)
+    monkeypatch.setattr(ev_run, "resolve", lambda spec, dataset: [Variant("hybrid", index=other)])
+    _no_search(monkeypatch)
+    with pytest.raises(SystemExit, match="hybrid.*without --rescore"):
+        ev_run.main(_main_args(tmp_path, "--rescore"))
+
+
+def test_rescore_with_no_rows_on_disk_says_so(tiny, tmp_path, fake_embed, monkeypatch):
+    monkeypatch.setitem(ev_run.DATASETS, "tiny", lambda cache_dir: tiny)
+    monkeypatch.setattr(ev_run, "resolve", lambda spec, dataset: [Variant("hybrid", index=SMALL)])
+    _no_search(monkeypatch)
+    with pytest.raises(SystemExit, match="no rows to rescore"):
+        ev_run.main(_main_args(tmp_path, "--rescore"))

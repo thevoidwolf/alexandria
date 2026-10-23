@@ -1,6 +1,7 @@
 """Run retrieval variants over a dataset; write per-query rows and a summary.
 
     uv run python -m evals.run --dataset scifact --variants all
+    uv run python -m evals.run --dataset papers --rescore   # after new grades
 
 Each query goes through ``alexandria.search.search(limit=100)``; the chunk
 hits are collapsed to documents in order of first appearance and the top 10
@@ -117,6 +118,19 @@ def run_variant(ds: Dataset, v: Variant, built: BuiltIndex) -> list[dict]:
     finally:
         conn.close()
     return rows
+
+
+def rescore(ds: Dataset, name: str, built: BuiltIndex, rows: list[dict], build: dict) -> list[dict]:
+    """The rows another run wrote, scored against the current qrels. Nothing is
+    searched, so rankings and latency stay those of the run that searched.
+    Refuses rows from another query set or index: those need a fresh run."""
+    if {r["query_id"]: r["query"] for r in rows} != ds.queries:
+        raise SystemExit(f"{name}: its rows are for another query set; run it without --rescore")
+    if build.get("key") != built.stats["key"]:
+        raise SystemExit(f"{name}: its rows came from index {build.get('key')}, this one is "
+                         f"{built.stats['key']}; run it without --rescore")
+    qrels = translate_qrels(ds.qrels, built.doc_map)
+    return [{**r, **_score(r["docs"], qrels.get(r["query_id"], {}))} for r in rows]
 
 
 def _git_sha(repo: Path = REPO) -> str | None:
@@ -272,12 +286,20 @@ def _previous_results(out_dir: Path) -> tuple[dict, dict, dict, dict]:
     return rows, builds, envs, searches
 
 
+def _write_rows(path: Path, rows: list[dict]) -> None:
+    with path.open("w") as f:
+        for r in rows:
+            f.write(json.dumps(r, sort_keys=True) + "\n")
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="python -m evals.run", description=__doc__.split("\n")[0])
     p.add_argument("--dataset", required=True, choices=sorted(DATASETS))
     p.add_argument("--variants", default="all", help='"all" or a comma-separated list')
     p.add_argument("--out", type=Path, default=REPO / "evals" / "results")
     p.add_argument("--cache", type=Path, default=REPO / "evals" / ".cache")
+    p.add_argument("--rescore", action="store_true",
+                   help="re-score the rows already in --out against the current qrels; no searching")
     args = p.parse_args(argv)
 
     env = environment()  # before the run: a commit made during it isn't what produced it
@@ -285,15 +307,27 @@ def main(argv: list[str] | None = None) -> None:
     out_dir = args.out / ds.name
     out_dir.mkdir(parents=True, exist_ok=True)
     rows_by_variant, builds, envs, searches = _previous_results(out_dir)
-    for v in resolve(args.variants, ds.name):
-        built = build_index(ds, v.index, args.cache)
-        rows = run_variant(ds, v, built)
-        rows_by_variant[v.name], builds[v.name], envs[v.name] = rows, built.stats, env
-        searches[v.name] = search_settings(v)
-        with (out_dir / f"{v.name}.jsonl").open("w") as f:
-            for r in rows:
-                f.write(json.dumps(r, sort_keys=True) + "\n")
-        print(f"{v.name}: {len(rows)} queries", flush=True)
+    if args.rescore:
+        # Every variant is checked before any rows are rewritten.
+        rescored = {
+            v.name: rescore(ds, v.name, build_index(ds, v.index, args.cache),
+                            rows_by_variant[v.name], builds[v.name])
+            for v in resolve(args.variants, ds.name) if v.name in rows_by_variant
+        }
+        if not rescored:
+            raise SystemExit(f"no rows to rescore in {out_dir}")
+        for name, rows in rescored.items():
+            rows_by_variant[name] = rows
+            _write_rows(out_dir / f"{name}.jsonl", rows)
+            print(f"{name}: {len(rows)} queries rescored", flush=True)
+    else:
+        for v in resolve(args.variants, ds.name):
+            built = build_index(ds, v.index, args.cache)
+            rows = run_variant(ds, v, built)
+            rows_by_variant[v.name], builds[v.name], envs[v.name] = rows, built.stats, env
+            searches[v.name] = search_settings(v)
+            _write_rows(out_dir / f"{v.name}.jsonl", rows)
+            print(f"{v.name}: {len(rows)} queries", flush=True)
 
     summary = summarize(ds, rows_by_variant, builds, envs, searches)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")

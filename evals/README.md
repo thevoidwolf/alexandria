@@ -14,6 +14,7 @@ uv run python -m evals.crosscheck --dataset scifact
 uv run python -m evals.datasets.papers          # fetch, check and pin the arXiv set
 uv run python -m evals.run --dataset papers --variants all
 uv run python -m evals.judge                    # grade pooled results (papers set)
+uv run python -m evals.run --dataset papers --rescore   # score the new grades
 ```
 
 The first SciFact run downloads the corpus (about 5 MB) and builds an index
@@ -305,7 +306,13 @@ of every mean instead of scoring 0. The rest of the grades come from
    the grade is for the paper, and the passage is evidence. Every grade is
    saved as it's given, so quit (`q`) whenever; the next session resumes.
    Run one session at a time.
-3. Run `evals.run` again to score.
+3. `uv run python -m evals.run --dataset papers --rescore` scores the
+   rows already on disk against the new grades without searching, so the
+   rankings and latencies stay those of the run that searched, and the
+   summary keeps that run's environment. It builds (or reuses) each
+   variant's index to check the rows came from it, and refuses rows from
+   another index or query set: those need `evals.run` without `--rescore`.
+   Running without it also scores, but re-searches and re-times everything.
 
 To fix a mis-keyed grade, delete its line from `qrels.tsv` and run the judge
 again; it asks for that pair again. Rewording a query after its results
