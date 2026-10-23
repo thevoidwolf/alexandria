@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from alexandria.search import search
-from evals.datasets import Dataset, scifact
+from evals.datasets import Dataset, papers, scifact
 from evals.index import BuiltIndex, build_index, canonical_ids, open_index, translate_qrels
 from evals.metrics import first_unique, mrr_at_k, ndcg_at_k, paired_bootstrap, recall_at_k
 from evals.variants import BASELINE, Variant, resolve
@@ -34,7 +34,7 @@ METRICS = ("ndcg@10", "recall@5", "recall@10", "mrr@10")
 BOOTSTRAP = {"n_resamples": 10_000, "seed": 0, "alpha": 0.05}
 
 REPO = Path(__file__).resolve().parent.parent
-DATASETS: dict[str, Callable[[Path], Dataset]] = {"scifact": scifact.load}
+DATASETS: dict[str, Callable[[Path], Dataset]] = {"scifact": scifact.load, "papers": papers.load}
 
 
 def _score(docs: list[str], judged: dict[str, int]) -> dict[str, float | None]:
