@@ -71,7 +71,7 @@ when FTS returns many results (the `-or` variants), so read `hybrid` as
 published numbers use, and are cross-checked against
 [ir-measures](https://github.com/terrierteam/ir_measures) (unit tests on
 random rankings, plus `python -m evals.crosscheck` after a full run).
-For the committed SciFact run (commit `8f01baf`) all three variants matched
+For the committed SciFact run (commit `5d043f8`) all three variants matched
 pytrec_eval: largest difference 2.2e-16 over 3,600 per-query values.
 
 | Metric | Meaning |
@@ -123,13 +123,14 @@ install, with a paired bootstrap 95% CI.
 
 | Variant | nDCG@10 | Recall@5 | Recall@10 | MRR@10 | Δ nDCG@10 [95% CI] | p50 / p95 ms |
 |---|---|---|---|---|---|---|
-| `fts` | 0.0467 | 0.0458 | 0.0458 | 0.0500 | −0.675 [−0.720, −0.630] | 0.5 / 1.0 |
-| `vec` | 0.7200 | 0.7653 | 0.8452 | 0.6845 | −0.002 [−0.006, +0.001] | 21.0 / 24.8 |
-| `hybrid` | 0.7219 | 0.7686 | 0.8452 | 0.6872 | baseline | 21.6 / 26.1 |
+| `fts` | 0.0467 | 0.0458 | 0.0458 | 0.0500 | −0.675 [−0.720, −0.630] | 0.5 / 0.9 |
+| `vec` | 0.7200 | 0.7653 | 0.8452 | 0.6845 | −0.002 [−0.006, +0.001] | 18.4 / 22.8 |
+| `hybrid` | 0.7219 | 0.7686 | 0.8452 | 0.6872 | baseline | 19.3 / 23.6 |
 
 The index holds 5,183 documents in 5,192 chunks (7 abstracts run past 800
-words; none collapsed as duplicates). Built in 306 s on CPU; the database
-is 63 MB.
+words; none collapsed as duplicates). Built in 274 s on CPU (306 s on an
+earlier build of the same index: build time varies with machine load);
+the database is 63 MB.
 
 #### Against published numbers
 
@@ -199,7 +200,7 @@ prediction P1.
   8.8% of SciFact abstracts exceed 512 tokens, so this matters little
   here; it will matter on the papers set (REPORT.md P2).
 - **Latency.** Embedding the query takes about 12 ms (p50, CPU, measured
-  separately) of the ~21 ms `vec` and `hybrid` take; the rest is the
+  separately) of the ~19 ms `vec` and `hybrid` take; the rest is the
   vector scan and loading the 100 hits. `fts` is sub-millisecond, but on
   SciFact that is mostly the cost of finding nothing.
 - **One machine.** All numbers come from a single CPU under WSL2.
