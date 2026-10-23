@@ -33,3 +33,30 @@ Also made before any run, while reading `search.py` and `ingest/`:
   400 words of each full-size chunk. SciFact abstracts are short, so this
   should matter little there; on the papers set it should favour smaller
   chunks (H5).
+
+## Changes to the plan
+
+Recorded before any papers-set results exist.
+
+- **2026-10-23: `hybrid-c400` is replaced by `hybrid-c300`** (300-word
+  chunks, 50-word overlap), on Voidwolf's call: a 400-word chunk is still
+  about 630 bge tokens on SciFact's text, over the 512-token window, so it
+  wouldn't test chunks that fit. `hybrid-c200` (200/40) stays. The 50-word
+  overlap for c300 was chosen to sit between c400's 50 and c200's 40.
+- **2026-10-23: the `fts-or` / `hybrid-or` definition is frozen** as used in
+  a scratch SciFact run on the same day, and won't change before the papers
+  results:
+  - split the query on whitespace; drop words containing no letter or
+    digit; wrap each remaining word in double quotes (doubling any `"`
+    inside it); join them with ` OR `;
+  - `fts-or` passes that expression to FTS5 as the MATCH query;
+  - `hybrid-or` uses it on the FTS side only; the vector side embeds the
+    original query; fusion (RRF, k = 60) and candidate depth are as in
+    `hybrid`;
+  - a query with no remaining words gets no FTS results.
+
+  Disclosure: that scratch run is the only OR formulation tried, and its
+  SciFact score (nDCG@10 0.686 for `fts-or`) was seen before this
+  definition was frozen. The same scratch run tried `vec` with BGE's query
+  instruction (0.713, below plain `vec`'s 0.720). Neither number has
+  tuned anything. Both are re-measured as committed variants in phase 4.
