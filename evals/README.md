@@ -75,7 +75,7 @@ when FTS returns many results (the `-or` variants), so read `hybrid` as
 published numbers use, and are cross-checked against
 [ir-measures](https://github.com/terrierteam/ir_measures) (unit tests on
 random rankings, plus `python -m evals.crosscheck` after a full run).
-For the committed SciFact run (commit `5d043f8`) all three variants matched
+For the committed SciFact run (commit `2a5fcbe`) all three variants matched
 pytrec_eval: largest difference 2.2e-16 over 3,600 per-query values.
 
 | Metric | Meaning |
@@ -128,8 +128,8 @@ install, with a paired bootstrap 95% CI.
 | Variant | nDCG@10 | Recall@5 | Recall@10 | MRR@10 | Δ nDCG@10 [95% CI] | p50 / p95 ms |
 |---|---|---|---|---|---|---|
 | `fts` | 0.0467 | 0.0458 | 0.0458 | 0.0500 | −0.675 [−0.720, −0.630] | 0.5 / 0.9 |
-| `vec` | 0.7200 | 0.7653 | 0.8452 | 0.6845 | −0.002 [−0.006, +0.001] | 18.4 / 22.8 |
-| `hybrid` | 0.7219 | 0.7686 | 0.8452 | 0.6872 | baseline | 19.3 / 23.6 |
+| `vec` | 0.7200 | 0.7653 | 0.8452 | 0.6845 | −0.002 [−0.006, +0.001] | 18.6 / 22.0 |
+| `hybrid` | 0.7219 | 0.7686 | 0.8452 | 0.6872 | baseline | 19.4 / 23.5 |
 
 The index holds 5,183 documents in 5,192 chunks (7 abstracts run past 800
 words; none collapsed as duplicates). Built in 274 s on CPU (306 s on an
