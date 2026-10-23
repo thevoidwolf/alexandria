@@ -18,7 +18,7 @@
   "variants": {
     "fts": {
       "environment": {
-        "alexandria_commit": "2a5fcbed3be2b018e9a20da67894e591c4e0f00b",
+        "alexandria_commit": "429bf5dee16861f67f1b79d29634e995f47b377c",
         "cpu": "AMD Ryzen 7 5700X3D 8-Core Processor",
         "cpu_count": 16,
         "numpy": "2.5.1",
@@ -52,8 +52,8 @@
         }
       },
       "latency_ms": {
-        "p50": 0.47,
-        "p95": 0.92
+        "p50": 0.46,
+        "p95": 0.86
       },
       "metrics": {
         "mrr@10": {
@@ -102,7 +102,7 @@
     },
     "hybrid": {
       "environment": {
-        "alexandria_commit": "2a5fcbed3be2b018e9a20da67894e591c4e0f00b",
+        "alexandria_commit": "429bf5dee16861f67f1b79d29634e995f47b377c",
         "cpu": "AMD Ryzen 7 5700X3D 8-Core Processor",
         "cpu_count": 16,
         "numpy": "2.5.1",
@@ -136,8 +136,8 @@
         }
       },
       "latency_ms": {
-        "p50": 19.395,
-        "p95": 23.478
+        "p50": 19.835,
+        "p95": 23.341
       },
       "metrics": {
         "mrr@10": {
@@ -160,7 +160,7 @@
     },
     "vec": {
       "environment": {
-        "alexandria_commit": "2a5fcbed3be2b018e9a20da67894e591c4e0f00b",
+        "alexandria_commit": "429bf5dee16861f67f1b79d29634e995f47b377c",
         "cpu": "AMD Ryzen 7 5700X3D 8-Core Processor",
         "cpu_count": 16,
         "numpy": "2.5.1",
@@ -194,8 +194,8 @@
         }
       },
       "latency_ms": {
-        "p50": 18.634999999999998,
-        "p95": 21.991
+        "p50": 19.15,
+        "p95": 23.0725
       },
       "metrics": {
         "mrr@10": {
