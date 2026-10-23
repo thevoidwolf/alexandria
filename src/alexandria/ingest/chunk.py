@@ -12,11 +12,13 @@ class Chunk:
 
 
 def chunk_text(text: str, target_tokens: int = 800, overlap_tokens: int = 100) -> list[Chunk]:
-    """Whitespace-token-based chunking with a fixed overlap.
+    """Chunk ``text`` into windows of whitespace-separated words, with a fixed overlap.
 
-    We approximate tokens with whitespace-separated words. This is fine for
-    the bge/MiniLM tokenizers whose actual token count is close-to-but-not-
-    equal-to word count; the +/- 20% error is well within the model's window.
+    ``target_tokens`` and ``overlap_tokens`` count words, not model tokens,
+    and words are not tokens: English scientific text averages about 1.6
+    bge tokens per word. bge-small-en-v1.5 embeds at most 512 tokens (about
+    320 such words), so the default 800-word chunk is roughly 1,250 tokens
+    and its tail is never embedded; FTS still indexes all of it. See #8.
     """
     if not text:
         return []
