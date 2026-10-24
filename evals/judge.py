@@ -40,9 +40,10 @@ REPO = Path(__file__).resolve().parent.parent
 GRADES = {"0": 0, "1": 1, "2": 2}
 PROMPT = "grade 0 / 1 / 2, m = more of the passage, s = skip, q = quit > "
 WINDOW_WORDS = 80
-# The longer view is capped at the smallest chunk any variant uses (200
-# words), so a passage's length can't reveal a chunk-size variant.
-MORE_WORDS = 200
+# The longer view is shorter than the smallest chunk any variant uses (200
+# words), so every full-size chunk is cut to the same length and marked "…"
+# where it's cut. A chunk shown whole would reveal a chunk-size variant.
+MORE_WORDS = 160
 _STOPWORDS = frozenset(
     "a an and are do does for how in is of on the to what which with".split()
 )

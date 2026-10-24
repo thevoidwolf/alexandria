@@ -5,7 +5,7 @@ from evals.datasets import Dataset
 from evals.index import IndexSettings, build_index
 from evals.judge import Pair, best_window, check_fresh, judge, pool, session
 from evals.run import run_variant
-from evals.variants import Variant
+from evals.variants import VARIANTS, Variant
 
 SMALL = IndexSettings(chunk_tokens=50, chunk_overlap=10)
 
@@ -216,7 +216,19 @@ def test_whole_passage_view_is_capped_so_length_cannot_reveal_chunk_size():
           chunk_text=lambda v, d, o: long_chunk,
           ask=lambda p, it=iter(["m", "1"]): next(it), show=shown.append, record=lambda p, g: None)
     longest = max(len(line.split()) for text in shown for line in text.splitlines())
-    assert longest <= 202                      # 200 words plus the ellipsis markers
+    assert longest <= 162                      # 160 words plus the ellipsis markers
+
+
+def test_whole_passage_view_trims_even_the_smallest_chunk():
+    # Shown whole, with no "…", a chunk would mark itself as the smallest
+    # chunk size and give that variant away.
+    smallest = min(v.index.chunk_tokens for v in VARIANTS.values())
+    chunk = " ".join(f"w{i}" for i in range(smallest))
+    shown = []
+    judge([Pair("q1", "a", (("v", 0),))], query_text={"q1": "w5"}, title={"a": "A"},
+          chunk_text=lambda v, d, o: chunk,
+          ask=lambda p, it=iter(["m", "1"]): next(it), show=shown.append, record=lambda p, g: None)
+    assert "…" in shown[-1]
 
 
 def test_results_for_reworded_queries_are_refused():

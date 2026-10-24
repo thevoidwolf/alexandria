@@ -298,14 +298,15 @@ of every mean instead of scoring 0. The rest of the grades come from
 2. `uv run python -m evals.judge` pools each query's top 10 papers from
    every variant run so far and shuffles them. For each unjudged pair it
    shows the query, the paper's title and an 80-word stretch of a
-   retrieved passage (`m` for 200 words of it). It never shows the variant,
-   the rank, or how many variants found the paper, and the 200-word cap is
-   the smallest chunk size any variant uses, so a passage's length can't
-   give a chunk-size variant away. Grade 2 if the paper is
-   what the query is looking for, 1 if it addresses the query, 0 if not:
-   the grade is for the paper, and the passage is evidence. Every grade is
-   saved as it's given, so quit (`q`) whenever; the next session resumes.
-   Run one session at a time.
+   retrieved passage (`m` for 160 words of it). It never shows the variant,
+   the rank, or how many variants found the paper. Both views are shorter
+   than the smallest chunk any variant uses (200 words), so every
+   full-size chunk is cut to the same length and marked "…" where it's
+   cut: a passage's length can't give a chunk-size variant away. Grade 2
+   if the paper is what the query is looking for, 1 if it addresses the
+   query, 0 if not: the grade is for the paper, and the passage is
+   evidence. Every grade is saved as it's given, so quit (`q`) whenever;
+   the next session resumes. Run one session at a time.
 3. `uv run python -m evals.run --dataset papers --rescore` scores the
    rows already on disk against the new grades without searching, so the
    rankings and latencies stay those of the run that searched, and the
