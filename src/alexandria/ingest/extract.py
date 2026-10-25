@@ -78,6 +78,13 @@ _MATH_FONT_MARKERS = (
 _MD_EMPHASIS = re.compile(r"\*{1,3}([^\n*]+)\*{1,3}")
 # A markdown code fence: ``` or ~~~, indented at most three spaces.
 _MD_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
+# pdfminer's stand-in for a glyph its font gives no text for.
+_PDF_CID = re.compile(r"\(cid:\d+\)")
+# A first-page "title" made only of these words is a stamp, not a title.
+_TITLE_STAMP = re.compile(
+    r"(?:strictly|private|and|confidential|draft|unlimited|distribution|master|internal"
+    r"|use|only|for|not|preprint|copy|restricted|proprietary|do|distribute)+"
+)
 
 
 def _normalize(text: str) -> str:
@@ -182,16 +189,47 @@ def _pdf_first_page_title(data: bytes) -> str | None:
                 block.append(line)
             # Each line is read on its own, with a tolerance wide enough to keep
             # smaller capitals, whose tops sit lower, on it.
-            text = "\n".join(
-                page.within_bbox((0, max(top - 1, 0), page.width, min(bottom + 1, page.height)))
-                .extract_text(y_tolerance=size)
-                for top, bottom in block
-            )
+            parts = []
+            for top, bottom in block:
+                def on_line(o, top=top, bottom=bottom):
+                    if o.get("object_type") != "char":
+                        return True
+                    if top - 1 <= o["top"] and o["bottom"] <= bottom + 1:
+                        return True
+                    # A larger capital starting a small-caps word sticks out above.
+                    middle = (o["top"] + o["bottom"]) / 2
+                    return o["size"] > size + 0.5 and top - 1 <= middle <= bottom + 1
+
+                line = page.filter(on_line)
+                if _overlapping_letters(line.chars) >= 2:   # two lines drawn over each other
+                    return None
+                parts.append(line.extract_text(y_tolerance=size))
     except Exception as e:
         # A missing title must never fail the ingest.
         log.warning("first-page title lookup failed: %s", e)
         return None
-    return _normalize(text) or None
+    return _clean_pdf_title("\n".join(parts))
+
+
+def _overlapping_letters(chars: list[dict]) -> int:
+    """Letters that start well inside the letter before them, left to right."""
+    letters = sorted((c for c in chars if c["text"].isalnum()), key=lambda c: c["x0"])
+    return sum(b["x0"] < a["x1"] - min(a["width"], b["width"]) / 2
+               for a, b in zip(letters, letters[1:]))
+
+
+def _clean_pdf_title(text: str) -> str | None:
+    """``text`` as a title, or None when it can't be one. Glyphs with no text
+    are dropped; page numbers, stamps, banners with a URL and paragraphs are
+    rejected, so the document falls back to its filename."""
+    text = re.sub(r"\s+", " ", _normalize(_PDF_CID.sub("", text))).strip()
+    if not re.search(r"[^\W\d_]{3}", text):         # no word: "[ 583 ]", "AP21-3"
+        return None
+    if len(text) > 200 or re.search(r"https?://|www\.", text, re.IGNORECASE):
+        return None
+    if _TITLE_STAMP.fullmatch(re.sub(r"[^a-z]", "", text.lower())):
+        return None
+    return text
 
 
 def _extract_pdf_pypdf(data: bytes) -> tuple[str, str | None, str | None, str | None, str]:

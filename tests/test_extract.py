@@ -437,6 +437,53 @@ def test_pdf_with_no_text_on_its_first_page_has_no_title():
     assert extract(_pdf(""), "pdf").title is None
 
 
+def test_pdf_title_rejects_interleaved_lines():
+    # Two lines drawn over each other read back as alternating letters.
+    data = _pdf(_line("Do the Laws of Physics", 17, 72, 700)
+                + _line("Forbid Time Machines", 17, 76, 701))
+    assert extract(data, "pdf").title is None
+
+
+def test_pdf_title_keeps_two_large_capitals_on_a_small_caps_line():
+    # Too few to set the title's size, but they sit on its line.
+    line = ("BT /F1 17 Tf 72 700 Td (M) Tj /F1 13 Tf (EMORIZING ) Tj /F1 17 Tf (T) Tj"
+            " /F1 13 Tf (RANSFORMERS) Tj ET\n")
+    data = _pdf(line + _line("Body text.", 10, 72, 650))
+    assert extract(data, "pdf").title == "MEMORIZING TRANSFORMERS"
+
+
+def test_pdf_title_leaves_out_smaller_text_beside_it():
+    # A journal's address in the margin, level with the title's top but smaller.
+    data = _pdf(_line("A Commentary on Maxwell", 24, 72, 700)
+                + _line("journal.example.org", 13, 400, 712))
+    assert extract(data, "pdf").title == "A Commentary on Maxwell"
+
+
+def test_pdf_title_rejects_a_page_number():
+    data = _pdf(_line("[ 583 ]", 20, 72, 740) + _line("Body text of the first page.", 10, 72, 700))
+    assert extract(data, "pdf").title is None
+
+
+@pytest.mark.parametrize("raw, want", [
+    ("(cid:204)RULER: What’s the Real Context Size", "RULER: What’s the Real Context Size"),
+    ("(cid:69)(cid:113)(cid:117)(cid:105)", None),         # glyphs with no text mapping
+    ("[ 583 ]", None),                                       # a page number
+    ("AP21-3", None),                                        # a report code
+    ("STRICTLY PRIVATE & CONFIDENTIAL", None),
+    ("STRICTLYPRIVATE&CONFIDENTIAL", None),
+    ("UNLIMITED DISTRIBUTION MASTER", None),
+    ("Downloaded 23 Jul 2008. Redistribution subject to license; see http://example.org/terms",
+     None),
+    ("This is a list of projects. " * 8, None),             # a paragraph, not a title
+    ("Confidential Computing for Machine Learning", "Confidential Computing for Machine Learning"),
+    ("G-EVAL: NLG Evaluation using GPT-4", "G-EVAL: NLG Evaluation using GPT-4"),
+    ("MTEB", "MTEB"),
+])
+def test_first_page_title_candidates_are_cleaned_or_rejected(raw, want):
+    from alexandria.ingest.extract import _clean_pdf_title
+
+    assert _clean_pdf_title(raw) == want
+
 def test_markdown_title_is_its_first_h1():
     data = b"Some preamble.\n\n# The Real Title\n\n## A section\n\n# A later H1\n"
     assert extract(data, "md").title == "The Real Title"
