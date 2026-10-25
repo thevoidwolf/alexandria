@@ -7,7 +7,7 @@ the failure log are in [REPORT.md](REPORT.md).
 ## Running it
 
 ```bash
-uv sync --group eval            # pyarrow + ir-measures; not needed by Alexandria itself
+uv sync --group eval            # pyarrow, ir-measures, matplotlib; not needed by Alexandria itself
 uv run python -m evals.run --dataset scifact --variants all
 uv run python -m evals.crosscheck --dataset scifact
 
@@ -15,6 +15,9 @@ uv run python -m evals.datasets.papers          # fetch, check and pin the arXiv
 uv run python -m evals.run --dataset papers --variants all
 uv run python -m evals.judge                    # grade pooled results (papers set)
 uv run python -m evals.run --dataset papers --rescore   # score the new grades
+
+uv run python -m evals.tokens --dataset papers  # chunk lengths in the model's tokens
+uv run python -m evals.report                   # REPORT.md's tables and charts
 ```
 
 The first SciFact run downloads the corpus (about 5 MB) and builds an index
@@ -54,6 +57,16 @@ Results go to `evals/results/<dataset>/`:
   library versions, commit) and, on the papers set, `judged@10`: the share
   of the variant's top-10 papers that have a grade. Running a subset of
   variants updates their entries and keeps the others.
+- `tokens.json`, from `evals.tokens`: tokens per word, and for each chunk
+  size the share of chunks longer than the embedding model's window, with
+  the median and 95th-percentile length.
+- `charts/`, from `evals.report`: REPORT.md's charts, in a light and a dark
+  version.
+
+`evals.report` fills the generated blocks in REPORT.md (between
+`<!-- report:… -->` markers) and leaves the hand-written text alone. On
+the papers set it leaves the blocks that depend on grades untouched until
+every variant's `judged@10` is 100%, and says which it skipped.
 
 On the same hardware, rerunning from a fresh clone reproduces the committed
 rows exactly, apart from `latency_ms`: checked by rebuilding the SciFact
@@ -253,10 +266,10 @@ chunks (5 to 33 per paper), built in 75 s on CPU, 18 MB. pypdf found a
 doesn't use titles, but `judge.py` shows the arXiv title instead. With the
 model's tokenizer the extracted text averages **1.77 tokens per word**
 (references, math and URLs tokenize badly; SciFact's abstracts average
-1.57). So 99% of the default 800-word chunks overflow bge-small's 512-token
-window, and even 300-word chunks overflow it 37.6% of the time (median 475
-tokens, 95th percentile 833); 200-word chunks overflow 8.3% of the time.
-These are one-off measurements, to be scripted with the report.
+1.56). So 99% of the default 800-word chunks overflow bge-small's 512-token
+window, and even 300-word chunks overflow it 37.3% of the time (median 475
+tokens, 95th percentile 828); 200-word chunks overflow 7.9% of the time.
+Counted by `python -m evals.tokens`, into `results/<dataset>/tokens.json`.
 
 #### Queries and judgements
 
@@ -343,10 +356,9 @@ or paper, grade outside 0–2, or pair judged twice.
 ### Known caveats
 
 - **Embedding truncation.** `bge-small-en-v1.5` reads at most 512 tokens.
-  Counted with its tokenizer over the SciFact corpus (a one-off
-  measurement, not yet scripted; phase 5's report will be), a word averages
-  1.57 tokens, so 512 tokens is about
-  326 words, while a default chunk is 800 words (~1,257 tokens): the
+  Counted with its tokenizer over the SciFact corpus (`python -m
+  evals.tokens`), a word averages 1.56 tokens, so 512 tokens is about 330
+  words, while a default chunk is 800 words (~1,250 tokens): the
   vector side never sees roughly the last 60% of a full-size chunk. Only
   8.8% of SciFact abstracts exceed 512 tokens, so this matters little
   here; it will matter on the papers set (REPORT.md P2).
