@@ -158,6 +158,10 @@ device = "cpu"                   # "cpu" | "cuda" | "mps"
 rerank = false
 rerank_model = "BAAI/bge-reranker-base"
 rerank_top_n = 50                # fused chunks the cross-encoder re-orders
+# Also rank documents whose title has every query word, so a search by title
+# finds the document ahead of those citing it. Off by default: in the retrieval
+# evals it changed nothing on the test sets (evals/REPORT.md, H7).
+titles = false
 
 [chunking]
 tokens = 800

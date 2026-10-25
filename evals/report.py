@@ -466,7 +466,7 @@ def render(text: str, results: Mapping[str, Results], provisional: bool = False,
     return _BLOCK.sub(fill, text), skipped
 
 
-LABELS = {"scifact": "SciFact", "papers": "Papers set"}
+LABELS = {"scifact": "SciFact", "papers": "Papers set", "papers-titles": "Title lookups"}
 
 
 def write_charts(r: Results, out_dir: Path) -> list[Path]:

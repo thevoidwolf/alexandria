@@ -62,6 +62,9 @@ class SearchHit:
     # for comparing, not a probability; no "nothing relevant" cut-off has
     # been measured.
     vec_similarity: float | None = None
+    # With title matching on, the document's rank among those whose title has
+    # every query word, on the one chunk that got its credit; None otherwise.
+    title_rank: int | None = None
 
 
 def _serialize_vec(vec) -> bytes:
@@ -163,6 +166,37 @@ def _fts_search(
         return []
 
 
+def _title_search(
+    conn: sqlite3.Connection,
+    query: str,
+    eligible: tuple[str, list] | None,
+    limit: int,
+) -> list[str]:
+    """Doc ids whose title has every query word, best BM25 over titles first.
+
+    Same AND rule as the keyword side: the query as FTS5 syntax, then as
+    quoted words. The column filter limits matching, and so BM25, to the
+    title, so a long body can't move a document up this list.
+    """
+    sql = "SELECT doc_id FROM documents_fts WHERE documents_fts MATCH ?"
+    params: list = []
+    if eligible is not None:
+        sub_sql, sub_params = eligible
+        sql += f" AND doc_id IN (SELECT doc_id FROM chunks WHERE rowid IN ({sub_sql}))"
+        params.extend(sub_params)
+    sql += " ORDER BY rank LIMIT ?"
+    params.append(limit)
+
+    for expr in (query, _quote_terms(query)):
+        if expr is None:
+            break
+        try:
+            return [r[0] for r in conn.execute(sql, [f"title : ({expr})", *params])]
+        except sqlite3.OperationalError:
+            continue
+    return []
+
+
 def _vec_search(
     conn: sqlite3.Connection,
     query_vec_bytes: bytes,
@@ -244,6 +278,7 @@ def search(
     rrf_k: int = RRF_K,
     fts_operator: FtsOperator = "and",
     rerank: bool = False,
+    titles: bool | None = None,
 ) -> list[SearchHit]:
     """Hybrid keyword + semantic retrieval, RRF-fused, category/tag filtered.
 
@@ -251,7 +286,12 @@ def search(
     defaults are the shipped behaviour. ``rerank`` re-orders the top
     ``cfg.search.rerank_top_n`` fused chunks by a cross-encoder's score,
     keeps the rest in fused order behind them, then applies ``limit``.
+    ``titles`` (default ``cfg.search.titles``) fuses in a third list where
+    keyword search runs: documents whose title has every query word, each
+    credited to its best candidate chunk, or its first chunk if it has none.
     """
+    if titles is None:
+        titles = cfg.search.titles
     if fts_operator not in FTS_OPERATORS:
         raise ValueError(f"fts_operator must be one of {FTS_OPERATORS}, got {fts_operator!r}")
     if not query.strip():
@@ -286,6 +326,20 @@ def search(
         fused = {rowid: 1.0 / (rrf_k + i + 1) for i, rowid in enumerate(vec_ranked)}
     else:
         fused = _rrf([fts_ranked, vec_ranked], rrf_k)
+
+    # A document's title is one entry for all its chunks, so its rank goes to
+    # the chunk fusion already ranks highest, or its first if none made it.
+    title_rank_by_rowid: dict[int, int] = {}
+    if titles and mode in ("hybrid", "fts"):
+        for rank, doc_id in enumerate(_title_search(conn, query, eligible, over_fetch), 1):
+            chunks = [r[0] for r in conn.execute(
+                "SELECT rowid FROM chunks WHERE doc_id = ? ORDER BY ord", (doc_id,))]
+            if not chunks:
+                continue
+            candidates = [c for c in chunks if c in fused]
+            rowid = max(candidates, key=fused.__getitem__) if candidates else chunks[0]
+            fused[rowid] = fused.get(rowid, 0.0) + 1.0 / (rrf_k + rank)
+            title_rank_by_rowid[rowid] = rank
 
     # Per-retriever rank lookup, 1-indexed. Populated for every fetched
     # rowid regardless of mode; missing means "not in this retriever's window".
@@ -327,6 +381,9 @@ def search(
             matched.append("fts")
         if vec_rank is not None:
             matched.append("vec")
+        title_rank = title_rank_by_rowid.get(rowid)
+        if title_rank is not None:
+            matched.append("title")
         hits.append(
             SearchHit(
                 chunk_id=chunk_id,
@@ -344,6 +401,7 @@ def search(
                 matched_in=tuple(matched),
                 rerank_score=rerank_by_rowid.get(rowid),
                 vec_similarity=vec_similarity_by_rowid.get(rowid),
+                title_rank=title_rank,
             )
         )
     return hits

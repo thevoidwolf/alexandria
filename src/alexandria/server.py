@@ -263,8 +263,10 @@ def search_tool(
         mode: "hybrid" (default), "fts" (keyword only), or "vec" (semantic only).
 
     Returns a list of hits, each with chunk_id, doc_id, score, fts_rank,
-    vec_rank, vec_similarity, matched_in, snippet, title, display_title,
-    category, tags, source_uri, and content_type.
+    vec_rank, vec_similarity, title_rank, matched_in, snippet, title,
+    display_title, category, tags, source_uri, and content_type. With
+    ``[search] titles`` on, a hit whose document's title has every query
+    word carries ``title_rank`` and ``"title"`` in ``matched_in``.
 
     Confidence signal: RRF flattens ``score`` into a narrow band
     (~1/(60+rank)), so use ``fts_rank`` / ``vec_rank`` (1-indexed within

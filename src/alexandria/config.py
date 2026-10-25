@@ -27,6 +27,10 @@ class SearchConfig:
     rerank: bool = False
     rerank_model: str = "BAAI/bge-reranker-base"
     rerank_top_n: int = 50                # fused chunks passed to the cross-encoder
+    # Also rank documents whose title has every query word, so a search by
+    # a title finds the document before the ones citing it. Off until the
+    # retrieval evals (evals/REPORT.md, H7) settle it.
+    titles: bool = False
 
 
 @dataclass(frozen=True)

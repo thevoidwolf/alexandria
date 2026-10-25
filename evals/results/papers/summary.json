@@ -448,6 +448,98 @@
         }
       }
     },
+    "hybrid+title": {
+      "environment": {
+        "alexandria_commit": "1481a3e75fe7f884cd456b975a09c548b95785e5",
+        "cpu": "AMD Ryzen 7 5800X 8-Core Processor",
+        "cpu_count": 16,
+        "numpy": "2.5.1",
+        "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+        "python": "3.14.6",
+        "sentence-transformers": "5.6.0",
+        "sqlite": "3.53.1",
+        "sqlite-vec": "0.1.9",
+        "tokenizers": "0.22.2",
+        "torch": "2.13.0",
+        "transformers": "4.57.6"
+      },
+      "fts_zero_hit_rate": 0.46511627906976744,
+      "index": {
+        "build_seconds": 76.59,
+        "db_bytes": 17813504,
+        "embed_device": "cpu",
+        "embed_revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+        "failed": {},
+        "key": "papers-f64262b37c00d7c3",
+        "n_chunks": 595,
+        "n_collapsed": 0,
+        "n_docs": 37,
+        "python": "3.14.6",
+        "settings": {
+          "chunk_overlap": 100,
+          "chunk_tokens": 800,
+          "embed_dim": 384,
+          "embed_model": "BAAI/bge-small-en-v1.5",
+          "pdf_backend": "pypdf"
+        }
+      },
+      "judged@10": 1.0,
+      "latency_ms": {
+        "p50": 18.67,
+        "p95": 21.035999999999998
+      },
+      "metrics": {
+        "mrr@10": {
+          "mean": 0.9487179487179487,
+          "n": 39
+        },
+        "ndcg@10": {
+          "mean": 0.7194505345855285,
+          "n": 39
+        },
+        "recall@10": {
+          "mean": 0.5686874114833155,
+          "n": 39
+        },
+        "recall@5": {
+          "mean": 0.3377636832000967,
+          "n": 39
+        }
+      },
+      "search": {
+        "fts_operator": "and",
+        "query_instruction": "",
+        "rerank": null,
+        "rrf_k": 60,
+        "titles": true
+      },
+      "vs_baseline": {
+        "mrr@10": {
+          "diff": 0.0,
+          "hi": 0.0,
+          "lo": 0.0,
+          "n": 39
+        },
+        "ndcg@10": {
+          "diff": 0.0,
+          "hi": 0.0,
+          "lo": 0.0,
+          "n": 39
+        },
+        "recall@10": {
+          "diff": 0.0,
+          "hi": 0.0,
+          "lo": 0.0,
+          "n": 39
+        },
+        "recall@5": {
+          "diff": 0.0,
+          "hi": 0.0,
+          "lo": 0.0,
+          "n": 39
+        }
+      }
+    },
     "hybrid-base": {
       "environment": {
         "alexandria_commit": "28566aa30b5f3d038df2bd303adcfa68e09b90f2",

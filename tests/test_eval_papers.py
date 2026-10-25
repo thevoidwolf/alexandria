@@ -369,3 +369,17 @@ def test_query_ids_are_plain_names(fetched, cache, qid):
     _write_queries(fetched, {**Q1, "id": qid})
     with pytest.raises(ValueError, match="line 1.*id"):
         load(cache, data_dir=fetched)
+
+
+def test_title_lookups_ask_for_each_paper_by_its_title():
+    from evals.datasets import Dataset
+    from evals.datasets.papers import title_lookups
+
+    papers = Dataset(name="papers", docs={"2401.1": b"%PDF a", "2312.9": b"%PDF b"}, queries={"q01": "x"},
+                     qrels={"q01": {"2401.1": 1}}, doc_suffix=".pdf", pooled=True,
+                     titles={"2401.1": "Later Paper", "2312.9": "Earlier Paper"})
+    ds = title_lookups(papers)
+    assert ds.name == "papers-titles" and ds.docs == papers.docs and ds.doc_suffix == ".pdf"
+    assert ds.queries == {"t01": "Earlier Paper", "t02": "Later Paper"}      # by arXiv id
+    assert ds.qrels == {"t01": {"2312.9": 2}, "t02": {"2401.1": 2}}
+    assert not ds.pooled            # each query's only relevant paper is known

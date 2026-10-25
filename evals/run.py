@@ -38,7 +38,9 @@ METRICS = ("ndcg@10", "recall@5", "recall@10", "mrr@10")
 BOOTSTRAP = {"n_resamples": 10_000, "seed": 0, "alpha": 0.05}
 
 REPO = Path(__file__).resolve().parent.parent
-DATASETS: dict[str, Callable[[Path], Dataset]] = {"scifact": scifact.load, "papers": papers.load}
+DATASETS: dict[str, Callable[[Path], Dataset]] = {
+    "scifact": scifact.load, "papers": papers.load, "papers-titles": papers.load_titles,
+}
 
 
 def _score(docs: list[str], judged: dict[str, int]) -> dict[str, float | None]:
@@ -61,6 +63,7 @@ def search_settings(v: Variant) -> dict:
             "model": s.rerank_model, "revision": rerank_revision(s.rerank_model),
             "top_n": s.rerank_top_n,
         } if v.rerank else None,
+        "titles": v.titles,
     }
 
 
@@ -71,7 +74,7 @@ def run_variant(ds: Dataset, v: Variant, built: BuiltIndex) -> list[dict]:
     qrels = translate_qrels(ds.qrels, built.doc_map)
     cfg, conn = open_index(built, query_instruction=v.query_instruction)
     opts = {"limit": SEARCH_LIMIT, "mode": v.mode, "rrf_k": v.rrf_k,
-            "fts_operator": v.fts_operator, "rerank": v.rerank}
+            "fts_operator": v.fts_operator, "rerank": v.rerank, "titles": v.titles}
     rows = []
     try:
         for text in ds.queries.values():
