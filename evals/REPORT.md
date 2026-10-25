@@ -287,6 +287,7 @@ final.
 | `hybrid-k20` | 0.7226 | 0.3378 | 0.5687 | 0.9615 | +0.003 [+0.000, +0.009] | 14.3 / 18.6 |
 | `fts-or` | 0.6665 | 0.3072 | 0.5023 | 0.9744 | **−0.053 [−0.101, −0.006]** | 29.6 / 50.6 |
 | `hybrid-or` | 0.7047 | 0.3294 | 0.5617 | 0.9615 | −0.015 [−0.050, +0.022] | 41.2 / 67.5 |
+| `hybrid+title` | 0.7195 | 0.3378 | 0.5687 | 0.9487 | +0.000 [+0.000, +0.000] | 18.7 / 21.0 |
 
 Means over the 39 of 43 queries with at least one relevant document; the others have no score.
 <!-- /report -->
@@ -340,8 +341,9 @@ Built on AMD Ryzen 7 5700X3D 8-Core Processor, embedding on CPU. A build is time
 | bge-base, 800/100 words | `vec-base`, `hybrid-base` | 37 | 595 | 174 | 19.4 |
 | bge-small, 300/50 words | `hybrid-c300` | 37 | 1,640 | 160 | 22.6 |
 | bge-small, 200/40 words | `hybrid-c200` | 37 | 2,558 | 224 | 23.3 |
+| bge-small, 800/100 words | `hybrid+title` | 37 | 595 | 77 | 17.8 |
 
-Built on AMD Ryzen 7 5700X3D 8-Core Processor, embedding on CPU. A build is timed once, and build times move with machine load.
+Built on AMD Ryzen 7 5700X3D 8-Core Processor, AMD Ryzen 7 5800X 8-Core Processor, embedding on CPU. A build is timed once, and build times move with machine load.
 <!-- /report -->
 
 ### What the embedding model sees (P2)
@@ -420,6 +422,8 @@ Each is judged per dataset.
   `hybrid` ranks exactly as `vec` does.
 - **P2**: its premise holds (see above), but the smaller chunks it
   pointed to don't measurably help (H5).
+- **H7** (title matching, added after these results): **not supported**,
+  with no room to gain on these sets; see [Matching titles](#matching-titles-h7).
 
 ### Is a hit found by both retrievers more likely relevant? (H4)
 
@@ -522,6 +526,7 @@ never ranked in its top 10. It now says only what was measured.
 | `hybrid-k20` | 0.7284 | 0.7070 | 0.6937 |
 | `fts-or` | 0.6746 | 0.6232 | 0.6715 |
 | `hybrid-or` | 0.7053 | 0.7006 | 0.6681 |
+| `hybrid+title` | 0.7284 | 0.7070 | 0.6764 |
 
 Paired differences in nDCG@10 [95% CI]:
 
@@ -843,3 +848,37 @@ same no-harm bar as the OR fallback's. Otherwise it stays opt-in.
   Titles feed neither chunks nor embeddings, so `hybrid` is re-run on the
   rebuilt index to confirm it reproduces its committed rows; comparisons
   on the graded set use the committed rows.
+
+### Results (H7)
+
+Title lookups, `hybrid` against `hybrid+title`, both run on the second
+machine (Ryzen 7 5800X):
+
+<!-- report:main papers-titles -->
+| Variant | nDCG@10 | Recall@5 | Recall@10 | MRR@10 | Δ nDCG@10 [95% CI] | p50 / p95 ms |
+|---|---|---|---|---|---|---|
+| `hybrid` | 1.0000 | 1.0000 | 1.0000 | 1.0000 | baseline | 19.8 / 25.1 |
+| `hybrid+title` | 1.0000 | 1.0000 | 1.0000 | 1.0000 | +0.000 [+0.000, +0.000] | 20.0 / 22.7 |
+<!-- /report -->
+
+**H7 is not supported, because these sets leave it no room.** `hybrid`
+already puts every paper first when it is searched by its own title
+(MRR@10 1.000 on all 37), so `hybrid+title` can't gain: +0.000 [+0.000,
++0.000] on every metric. The title list did fire. It matched 36 of the 37
+titles and credited the hit that was already first; the one miss is RuLES,
+whose PDF's title metadata is just "RuLES". The crowding H7 describes needs
+many documents quoting one title, and among 37 papers few cite any one of
+them.
+
+On the graded papers set `hybrid+title` changes nothing either: nDCG@10
++0.000 [+0.000, +0.000], and with `judged@10` still 100% no new pairs
+needed grading. Its title list matched 4 of the 43 queries, the short-name
+lookups `SysBench`, `AgentDojo`, `ColBERTv2` and `Ragas`, whose papers were
+already first. Its row in the main and cost tables is from the rebuilt
+index on the second machine, so its latency (18.7 ms at p50) is comparable
+with `hybrid` re-run there (18.2 ms), not with the committed 15.8 ms. On the
+title lookups, run side by side, it is 20.0 against 19.8 ms.
+
+**Decision, by the rule as set:** the no-harm half is met, the gain half
+isn't, so title matching stays opt-in, as `search(titles=True)` or
+`[search] titles = true`.

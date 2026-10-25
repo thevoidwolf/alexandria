@@ -1,0 +1,175 @@
+{
+  "baseline": "hybrid",
+  "dataset": "papers-titles",
+  "n_queries": 37,
+  "protocol": {
+    "bootstrap": {
+      "alpha": 0.05,
+      "n_resamples": 10000,
+      "seed": 0
+    },
+    "doc_k": 10,
+    "search_limit": 100
+  },
+  "source": {
+    "papers.lock.json": "cafff488bd92d606bd8a31a65f18ede4f4a0ca53c01c8d394b89210b46fba5d9"
+  },
+  "variants": {
+    "hybrid": {
+      "environment": {
+        "alexandria_commit": "1481a3e75fe7f884cd456b975a09c548b95785e5",
+        "cpu": "AMD Ryzen 7 5800X 8-Core Processor",
+        "cpu_count": 16,
+        "numpy": "2.5.1",
+        "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+        "python": "3.14.6",
+        "sentence-transformers": "5.6.0",
+        "sqlite": "3.53.1",
+        "sqlite-vec": "0.1.9",
+        "tokenizers": "0.22.2",
+        "torch": "2.13.0",
+        "transformers": "4.57.6"
+      },
+      "fts_zero_hit_rate": 0.0,
+      "index": {
+        "build_seconds": 75.39,
+        "db_bytes": 17813504,
+        "embed_device": "cpu",
+        "embed_revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+        "failed": {},
+        "key": "papers-titles-2ca320658aac3ec7",
+        "n_chunks": 595,
+        "n_collapsed": 0,
+        "n_docs": 37,
+        "python": "3.14.6",
+        "settings": {
+          "chunk_overlap": 100,
+          "chunk_tokens": 800,
+          "embed_dim": 384,
+          "embed_model": "BAAI/bge-small-en-v1.5",
+          "pdf_backend": "pypdf"
+        }
+      },
+      "latency_ms": {
+        "p50": 19.77,
+        "p95": 25.07
+      },
+      "metrics": {
+        "mrr@10": {
+          "mean": 1.0,
+          "n": 37
+        },
+        "ndcg@10": {
+          "mean": 1.0,
+          "n": 37
+        },
+        "recall@10": {
+          "mean": 1.0,
+          "n": 37
+        },
+        "recall@5": {
+          "mean": 1.0,
+          "n": 37
+        }
+      },
+      "search": {
+        "fts_operator": "and",
+        "query_instruction": "",
+        "rerank": null,
+        "rrf_k": 60,
+        "titles": false
+      }
+    },
+    "hybrid+title": {
+      "environment": {
+        "alexandria_commit": "1481a3e75fe7f884cd456b975a09c548b95785e5",
+        "cpu": "AMD Ryzen 7 5800X 8-Core Processor",
+        "cpu_count": 16,
+        "numpy": "2.5.1",
+        "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+        "python": "3.14.6",
+        "sentence-transformers": "5.6.0",
+        "sqlite": "3.53.1",
+        "sqlite-vec": "0.1.9",
+        "tokenizers": "0.22.2",
+        "torch": "2.13.0",
+        "transformers": "4.57.6"
+      },
+      "fts_zero_hit_rate": 0.0,
+      "index": {
+        "build_seconds": 75.39,
+        "db_bytes": 17813504,
+        "embed_device": "cpu",
+        "embed_revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+        "failed": {},
+        "key": "papers-titles-2ca320658aac3ec7",
+        "n_chunks": 595,
+        "n_collapsed": 0,
+        "n_docs": 37,
+        "python": "3.14.6",
+        "settings": {
+          "chunk_overlap": 100,
+          "chunk_tokens": 800,
+          "embed_dim": 384,
+          "embed_model": "BAAI/bge-small-en-v1.5",
+          "pdf_backend": "pypdf"
+        }
+      },
+      "latency_ms": {
+        "p50": 20.0,
+        "p95": 22.677999999999997
+      },
+      "metrics": {
+        "mrr@10": {
+          "mean": 1.0,
+          "n": 37
+        },
+        "ndcg@10": {
+          "mean": 1.0,
+          "n": 37
+        },
+        "recall@10": {
+          "mean": 1.0,
+          "n": 37
+        },
+        "recall@5": {
+          "mean": 1.0,
+          "n": 37
+        }
+      },
+      "search": {
+        "fts_operator": "and",
+        "query_instruction": "",
+        "rerank": null,
+        "rrf_k": 60,
+        "titles": true
+      },
+      "vs_baseline": {
+        "mrr@10": {
+          "diff": 0.0,
+          "hi": 0.0,
+          "lo": 0.0,
+          "n": 37
+        },
+        "ndcg@10": {
+          "diff": 0.0,
+          "hi": 0.0,
+          "lo": 0.0,
+          "n": 37
+        },
+        "recall@10": {
+          "diff": 0.0,
+          "hi": 0.0,
+          "lo": 0.0,
+          "n": 37
+        },
+        "recall@5": {
+          "diff": 0.0,
+          "hi": 0.0,
+          "lo": 0.0,
+          "n": 37
+        }
+      }
+    }
+  }
+}
