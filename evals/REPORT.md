@@ -788,3 +788,58 @@ queries, comes back as `2306.05685.pdf`. The brief also notes that
 Markdown stored through `store_document_tool` loses its `# Heading`
 title; nothing in these sets is Markdown. Both fixes belong in their own
 pull request, off this branch, so they can't move the numbers above.
+
+## Matching titles (H7)
+
+Recorded on 2026-10-25, after every result above, and before the variant
+below was written or run on any set.
+
+**Why.** A search by a paper's exact title can rank the paper below the
+papers that cite it. Keyword search matches every reference list that
+quotes the title, and BM25 prefers those short entries to the paper's own
+long first chunk. Search ranks chunk text only; a document's title, which
+ingest now extracts for most PDFs and Markdown, plays no part. The idea
+came from such a search outside these sets, not from any result above.
+
+**The variant, `hybrid+title`.** It is `hybrid` plus a third ranked list:
+
+- the query is matched against document titles only, with the keyword
+  side's AND rule: as FTS5 syntax first, then as quoted words, all of which
+  must appear in the title;
+- matching documents are ranked by BM25 over their titles, up to the same
+  candidate depth, and filtered by category and tags like the other lists;
+- a document at title rank r adds 1/(60 + r) to whichever of its chunks
+  already has the highest fused score among the candidates, or to its
+  first chunk if none of its chunks is a candidate;
+- everything else, fusion included, is unchanged.
+
+**The title-lookup set, `papers-titles`.** 37 queries, one per paper in the
+papers set: its arXiv title as `papers.lock.json` records it, typed as is.
+The only relevant document for each is that paper (grade 2), so the set
+needs no judging. Matching uses the titles ingest extracts, which for some
+papers differ from the arXiv title (a short name in the PDF's metadata, or
+small capitals read as capitals).
+
+**H7:** on the title-lookup set, `hybrid+title` beats `hybrid` on MRR@10,
+and on the graded papers set it doesn't lower nDCG@10.
+
+**Decision rule**, Voidwolf's call, set now: title matching becomes the
+default only if `hybrid+title`'s MRR@10 difference from `hybrid` on the
+title-lookup set has a 95% CI entirely above zero, *and* its nDCG@10
+difference on the graded papers set has a CI lower bound above −0.02, the
+same no-harm bar as the OR fallback's. Otherwise it stays opt-in.
+
+**Disclosures.**
+
+- The graded papers set isn't unseen: every variant's results and grades
+  on it are above. Here it only checks for harm.
+- `hybrid+title` may return papers no variant has returned before. Any such
+  pair is graded blind with `evals.judge` before the papers set is scored,
+  as in phase 4.
+- SciFact is ingested as text without titles, so `hybrid+title` would rank
+  exactly as `hybrid` there. It isn't run.
+- The ingest code has changed since the committed rows (titles are now
+  extracted), so the papers indexes have new cache keys and are rebuilt.
+  Titles feed neither chunks nor embeddings, so `hybrid` is re-run on the
+  rebuilt index to confirm it reproduces its committed rows; comparisons
+  on the graded set use the committed rows.
