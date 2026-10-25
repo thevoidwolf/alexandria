@@ -50,9 +50,9 @@ Each source (file or URL) flows through:
 2. **Content-type detect** — sniff magic bytes; classify as `pdf | html | txt | md`. Don't trust extensions blindly.
 3. **Resolve against the corpus** (see §4). Known `file`/`url` source is *gate 1*; raw-bytes hash (`sha256_raw`) is *gate 2*. A hit skips re-processing and returns the existing `doc_id`; changed content from a known source becomes an in-place update.
 4. **Extract** — text + structural metadata (title, author, publication date when available):
-   - PDF: `pypdf` for text-first PDFs; fall back to `pdfplumber` if extracted text is empty.
+   - PDF: `pypdf` for text-first PDFs; fall back to `pdfplumber` if extracted text is empty. The title is the `/Title` metadata; when that's empty, as pdfTeX papers usually leave it, it's the first page's largest upright text (`pdfplumber`), so rotated margin stamps and drop caps are skipped.
    - HTML: `trafilatura` (main-content extraction, strips nav/ads/boilerplate).
-   - TXT/MD: read as UTF-8; markdown is kept as-is (searchable as text).
+   - TXT/MD: read as UTF-8; markdown is kept as-is (searchable as text). A markdown document's title is its first `# ` heading outside a code fence; plain text gets none.
 5. **Normalize** — Unicode NFKC (folds superscript/subscript digits, Greek variants, compatibility math operators — the biggest win for LaTeX-generated PDFs), expand ligatures (ﬁ/ﬀ/ﬂ/ﬃ/ﬄ/st), strip zero-widths and soft hyphens, repair `word-\nword` line-break hyphenation, form-feed → paragraph, drop lone surrogates + C0/C1 control chars, collapse whitespace. See M11.
 6. **Text hash** (`sha256_text`) → *dedup gate 3*. Catches re-exported PDFs, mirrored HTML, and format conversions of the same content.
 7. **Chunk** — 800-token windows with 100-token overlap. Store chunk char offsets back into the full text.

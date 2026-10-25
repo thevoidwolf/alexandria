@@ -155,8 +155,9 @@ def test_extract_pdf_pulls_body_text_and_creation_date():
     assert "A Sample Paper on Vector Fields" in result.text
     assert "Ada Fixtura" in result.text
 
-    # This PDF has no /Title (typical of pdfTeX output) but does carry /CreationDate.
-    assert result.title is None
+    # This PDF has no /Title (typical of pdfTeX output), so the title comes
+    # from its first page. It does carry /CreationDate.
+    assert result.title == "A Sample Paper on Vector Fields"
     assert result.published_at is not None
     assert "2025" in result.published_at
 
@@ -351,3 +352,132 @@ def test_auto_mode_stays_on_pypdf_for_math_pdf_after_m11(tmp_path: Path, caplog)
     # "math-heavy document" advisory so operators know why the doc looked odd.
     joined = "\n".join(r.getMessage() for r in caplog.records)
     assert "math-heavy" in joined
+
+
+# ---- titles when the source's metadata has none ----------------------------
+
+
+def _pdf(content: str, title: str | None = None) -> bytes:
+    """A one-page Letter-size PDF whose page runs ``content`` (PDF text
+    operators, Helvetica as /F1), with /Title metadata if given."""
+    stream = content.encode("latin-1")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]"
+        b" /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream),
+    ]
+    if title is not None:
+        objects.append(b"<< /Title (%s) >>" % title.encode("latin-1"))
+    out = b"%PDF-1.4\n"
+    offsets = []
+    for i, obj in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (i, obj)
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % off for off in offsets)
+    info = b" /Info 6 0 R" if title is not None else b""
+    out += b"trailer\n<< /Size %d /Root 1 0 R%s >>\n" % (len(objects) + 1, info)
+    return out + b"startxref\n%d\n%%%%EOF\n" % xref
+
+
+def _line(text: str, size: float, x: float, y: float) -> str:
+    return f"BT /F1 {size} Tf {x} {y} Td ({text}) Tj ET\n"
+
+
+def test_pdf_title_metadata_wins_over_the_first_page():
+    data = _pdf(_line("A Large Heading", 20, 72, 700), title="The Metadata Title")
+    assert extract(data, "pdf").title == "The Metadata Title"
+
+
+def test_pdf_title_falls_back_when_the_metadata_title_is_blank():
+    data = _pdf(_line("The Real Title", 16, 72, 700), title="   ")
+    assert extract(data, "pdf").title == "The Real Title"
+
+def test_pdf_title_ignores_rotated_margin_text():
+    # arXiv stamps its identifier up the left margin, rotated and in a large font.
+    stamp = "BT /F1 20 Tf 0 1 -1 0 40 150 Tm (arXiv:2401.00001v1 [cs.CL] 1 Jan 2024) Tj ET\n"
+    data = _pdf(stamp + _line("The Real Title", 16, 72, 700) + _line("Body text.", 10, 72, 650))
+    assert extract(data, "pdf").title == "The Real Title"
+
+
+def test_pdf_title_keeps_small_capitals_on_the_title_line():
+    # Small caps: full-size capitals, the rest of each word smaller, one baseline.
+    line = ("BT /F1 17 Tf 72 700 Td (S) Tj /F1 13 Tf (ELF) Tj /F1 17 Tf (-RAG: L) Tj"
+            " /F1 13 Tf (EARNING) Tj ET\n")
+    data = _pdf(line + _line("Body text.", 10, 72, 650))
+    assert extract(data, "pdf").title == "SELF-RAG: LEARNING"
+
+
+def test_pdf_title_skips_a_drop_cap():
+    # An IEEE-style drop cap is the largest character on the page.
+    data = _pdf(_line("A Survey of Things", 18, 72, 700)
+                + _line("L", 40, 72, 560) + _line("arge models are everywhere.", 10, 110, 590))
+    assert extract(data, "pdf").title == "A Survey of Things"
+
+
+def test_pdf_title_joins_a_wrapped_title_and_repairs_its_hyphen():
+    data = _pdf(_line("Can Language Models Fol-", 17, 72, 700)
+                + _line("low System Messages?", 17, 72, 680)
+                + _line("Ada Fixtura", 12, 72, 650))
+    assert extract(data, "pdf").title == "Can Language Models Follow System Messages?"
+
+
+def test_pdf_title_is_the_first_block_of_its_largest_text():
+    data = _pdf(_line("The Real Title", 17, 72, 700)
+                + _line("Body text.", 10, 72, 650)
+                + _line("Another Heading", 17, 72, 400))
+    assert extract(data, "pdf").title == "The Real Title"
+
+
+def test_pdf_with_no_text_on_its_first_page_has_no_title():
+    assert extract(_pdf(""), "pdf").title is None
+
+
+def test_markdown_title_is_its_first_h1():
+    data = b"Some preamble.\n\n# The Real Title\n\n## A section\n\n# A later H1\n"
+    assert extract(data, "md").title == "The Real Title"
+
+
+def test_markdown_title_drops_emphasis_markers():
+    assert extract(b"# **Bold Title**\n\nbody\n", "md").title == "Bold Title"
+
+
+def test_markdown_title_skips_comments_in_code_fences():
+    data = b"```sh\n# install the deps\npip install x\n```\n\n# Setup Notes\n"
+    assert extract(data, "md").title == "Setup Notes"
+
+
+def test_markdown_without_an_h1_has_no_title():
+    assert extract(b"## Only a section\n\nbody\n", "md").title is None
+
+
+def test_plain_text_hash_lines_are_not_titles():
+    # In a .txt file a "# " line is as often a comment as a heading.
+    assert extract(b"# generated by a script\nkey = value\n", "txt").title is None
+
+
+def test_marker_title_is_its_first_h1_without_emphasis(monkeypatch):
+    import sys
+    import types
+
+    from alexandria.ingest.extract import _extract_pdf_marker
+
+    for name in ("marker", "marker.converters", "marker.converters.pdf",
+                 "marker.models", "marker.output"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    sys.modules["marker.converters.pdf"].PdfConverter = type(
+        "P", (), {"__init__": lambda self, *a, **k: None,
+                  "__call__": lambda self, path: object()}
+    )
+    sys.modules["marker.models"].create_model_dict = lambda: {}
+    sys.modules["marker.output"].text_from_rendered = (
+        lambda r: ("Preprint\n\n# **A Marker Title**\n\nBody.", None, [])
+    )
+    monkeypatch.setenv("TORCH_DEVICE", "cpu")
+
+    _, title, *_ = _extract_pdf_marker(b"%PDF-stub", device="cpu")
+    assert title == "A Marker Title"

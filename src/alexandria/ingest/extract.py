@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -75,6 +76,8 @@ _MATH_FONT_MARKERS = (
 
 # Markdown emphasis wrappers around marker's extracted titles.
 _MD_EMPHASIS = re.compile(r"\*{1,3}([^\n*]+)\*{1,3}")
+# A markdown code fence: ``` or ~~~, indented at most three spaces.
+_MD_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
 
 
 def _normalize(text: str) -> str:
@@ -129,6 +132,68 @@ def detect_content_type(data: bytes, hint: str | None, filename: str | None) -> 
     return "txt"
 
 
+def _first_h1(markdown: str, max_lines: int = 200) -> str | None:
+    """The first ``# `` heading outside a code fence, without emphasis markers."""
+    fence = None
+    for line in markdown.splitlines()[:max_lines]:
+        if m := _MD_FENCE.match(line):
+            if fence is None:
+                fence = m.group(1)[0]
+            elif m.group(1)[0] == fence:
+                fence = None
+            continue
+        s = line.strip()
+        if fence is None and s.startswith("# "):
+            return _MD_EMPHASIS.sub(r"\1", s[2:].strip()).strip() or None
+    return None
+
+
+def _pdf_first_page_title(data: bytes) -> str | None:
+    """A title for a PDF without /Title: the first block of its first page's
+    largest upright text, read whole so small capitals on those lines stay."""
+    import pdfplumber
+
+    try:
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            if not pdf.pages:
+                return None
+            # arXiv's identifier runs up the margin, rotated; a title doesn't.
+            page = pdf.pages[0].filter(
+                lambda o: o.get("object_type") != "char" or o.get("upright", True)
+            )
+            chars = [c for c in page.chars if c["text"].strip()]
+            # A size only one or two characters use is a drop cap or a symbol.
+            sizes = [s for s, n in Counter(round(c["size"], 1) for c in chars).items() if n >= 3]
+            if not sizes:
+                return None
+            size = max(sizes)
+            lines: list[list[float]] = []      # [top, bottom] of each line in that size
+            for c in sorted(chars, key=lambda c: c["top"]):
+                if abs(round(c["size"], 1) - size) > 0.5:
+                    continue
+                if lines and c["top"] <= lines[-1][1]:
+                    lines[-1][1] = max(lines[-1][1], c["bottom"])
+                else:
+                    lines.append([c["top"], c["bottom"]])
+            block = lines[:1]
+            for line in lines[1:]:   # a title wraps onto lines just below
+                if line[0] - block[-1][1] >= size:
+                    break
+                block.append(line)
+            # Each line is read on its own, with a tolerance wide enough to keep
+            # smaller capitals, whose tops sit lower, on it.
+            text = "\n".join(
+                page.within_bbox((0, max(top - 1, 0), page.width, min(bottom + 1, page.height)))
+                .extract_text(y_tolerance=size)
+                for top, bottom in block
+            )
+    except Exception as e:
+        # A missing title must never fail the ingest.
+        log.warning("first-page title lookup failed: %s", e)
+        return None
+    return _normalize(text) or None
+
+
 def _extract_pdf_pypdf(data: bytes) -> tuple[str, str | None, str | None, str | None, str]:
     from pypdf import PdfReader
 
@@ -146,6 +211,8 @@ def _extract_pdf_pypdf(data: bytes) -> tuple[str, str | None, str | None, str | 
 
     meta = reader.metadata or {}
     title = (meta.get("/Title") or None) if meta else None
+    if not (title and title.strip()):   # pdfTeX papers often leave /Title empty
+        title = _pdf_first_page_title(data)
     author = (meta.get("/Author") or None) if meta else None
     published = None
     if meta and (raw := meta.get("/CreationDate")):
@@ -216,15 +283,8 @@ def _extract_pdf_marker(
         os.unlink(tmp_path)
 
     # marker output is markdown; first h1 is a reasonable title fallback when the
-    # source PDF has no /Title metadata (typical for pdfTeX papers). Strip any
-    # markdown emphasis wrappers ("# **Foo**" → "Foo").
-    title: str | None = None
-    for line in text.split("\n", 200):
-        s = line.strip()
-        if s.startswith("# "):
-            candidate = s[2:].strip()
-            title = _MD_EMPHASIS.sub(r"\1", candidate).strip() or None
-            break
+    # source PDF has no /Title metadata (typical for pdfTeX papers).
+    title = _first_h1(text)
 
     try:
         from importlib.metadata import version as _pkg_version
@@ -364,8 +424,13 @@ def _extract_html(data: bytes) -> tuple[str, str | None, str | None, str | None,
     return text, title, author, published, "trafilatura"
 
 
-def _extract_text(data: bytes) -> tuple[str, str | None, str | None, str | None, str]:
-    return data.decode("utf-8", errors="replace"), None, None, None, "plaintext"
+def _extract_text(
+    data: bytes, markdown: bool = False
+) -> tuple[str, str | None, str | None, str | None, str]:
+    text = data.decode("utf-8", errors="replace")
+    # Only markdown: in plain text a "# " line is as often a comment.
+    title = _first_h1(text) if markdown else None
+    return text, title, None, None, "plaintext"
 
 
 def extract(
@@ -376,7 +441,7 @@ def extract(
     elif content_type == "html":
         text, title, author, published, extractor = _extract_html(data)
     else:  # txt, md
-        text, title, author, published, extractor = _extract_text(data)
+        text, title, author, published, extractor = _extract_text(data, content_type == "md")
 
     def _norm_meta(v: str | None) -> str | None:
         if v is None:
