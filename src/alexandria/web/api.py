@@ -425,6 +425,13 @@ def build_api_routes(
             else:
                 category = raw.strip() if isinstance(raw, str) else None
 
+        title: str | None | type(...) = ...
+        if "title" in body:
+            raw = body["title"]
+            if raw is not None and not isinstance(raw, str):
+                return JSONResponse({"error": "title must be a string or null"}, status_code=400)
+            title = raw     # blank or null unsets it
+
         tags: list[str] | None = None
         if "tags" in body:
             raw_tags = body["tags"]
@@ -435,12 +442,12 @@ def build_api_routes(
             else:
                 return JSONResponse({"error": "tags must be a list or comma-separated string"}, status_code=400)
 
-        if category is ... and tags is None:
+        if category is ... and tags is None and title is ...:
             return JSONResponse({"error": "no fields to update"}, status_code=400)
 
         ok = await run_locked(
             lock, update_document_metadata, doc_id, conn,
-            category=category, tags=tags,
+            category=category, tags=tags, title=title,
         )
         if not ok:
             return JSONResponse({"error": "not found"}, status_code=404)

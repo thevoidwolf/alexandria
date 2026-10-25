@@ -36,6 +36,10 @@
     </datalist>
     <div class="row" style="align-items: end;">
       <div>
+        <label class="dim" style="font-size: 12px;">Title (blank shows the filename)</label>
+        <input type="text" id="edit-title" value="{{ doc.title or '' }}" placeholder="{{ fallback_title(doc) }}">
+      </div>
+      <div>
         <label class="dim" style="font-size: 12px;">Category</label>
         <input type="text" id="edit-category" list="known-categories" value="{{ doc.category or '' }}">
       </div>
@@ -157,13 +161,14 @@
   const saveBtn    = document.getElementById('edit-save');
   const cancelBtn  = document.getElementById('edit-cancel');
   const errBox     = document.getElementById('edit-err');
+  const titleEl    = document.getElementById('edit-title');
   const categoryEl = document.getElementById('edit-category');
   const tagsEl     = document.getElementById('edit-tags');
 
   editBtn.addEventListener('click', () => {
     view.style.display = 'none';
     editForm.style.display = '';
-    categoryEl.focus();
+    titleEl.focus();
   });
   cancelBtn.addEventListener('click', () => {
     editForm.style.display = 'none';
@@ -172,6 +177,7 @@
   });
   saveBtn.addEventListener('click', async () => {
     errBox.style.display = 'none';
+    const title = titleEl.value.trim();
     const category = categoryEl.value.trim();
     const tags = tagsEl.value.split(',').map(t => t.trim()).filter(Boolean);
     let r;
@@ -180,7 +186,7 @@
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         credentials: 'same-origin',
-        body: JSON.stringify({ category: category || null, tags }),
+        body: JSON.stringify({ title: title || null, category: category || null, tags }),
       });
     } catch (e) {
       errBox.textContent = 'Save failed: ' + e.message;

@@ -104,6 +104,31 @@ def test_patch_unknown_404(seeded_client):
     assert r.status_code == 404
 
 
+
+def test_patch_sets_title(seeded_client):
+    client, conn = seeded_client
+    doc_id = conn.execute("SELECT id FROM documents WHERE category='bills'").fetchone()[0]
+    r = client.patch(f"/api/documents/{doc_id}", json={"title": "March electricity bill"})
+    assert r.status_code == 200
+    row = conn.execute("SELECT title FROM documents WHERE id=?", (doc_id,)).fetchone()
+    assert row[0] == "March electricity bill"
+
+
+def test_patch_blank_title_unsets(seeded_client):
+    client, conn = seeded_client
+    doc_id = conn.execute("SELECT id FROM documents WHERE category='notes'").fetchone()[0]
+    r = client.patch(f"/api/documents/{doc_id}", json={"title": "  "})
+    assert r.status_code == 200
+    row = conn.execute("SELECT title FROM documents WHERE id=?", (doc_id,)).fetchone()
+    assert row[0] is None
+
+
+def test_patch_non_string_title_400(seeded_client):
+    client, conn = seeded_client
+    doc_id = conn.execute("SELECT id FROM documents LIMIT 1").fetchone()[0]
+    r = client.patch(f"/api/documents/{doc_id}", json={"title": 5})
+    assert r.status_code == 400
+
 # ---- DELETE /api/documents/{id} ------------------------------------------
 
 
@@ -192,3 +217,15 @@ def test_document_detail_shows_upload_version_control(seeded_client):
     html = client.get(f"/documents/{doc_id}").text
     assert 'id="upload-version-btn"' in html
     assert 'id="upload-version-file"' in html
+
+
+def test_document_detail_edit_form_holds_the_title_and_its_fallback(seeded_client):
+    client, conn = seeded_client
+    note = conn.execute("SELECT id FROM documents WHERE category='notes'").fetchone()[0]
+    html = client.get(f"/documents/{note}").text
+    assert 'id="edit-title"' in html and 'value="A short markdown note"' in html
+    # A blank title shows the filename, so the empty field says so.
+    bill = conn.execute("SELECT id FROM documents WHERE category='bills'").fetchone()[0]
+    html = client.get(f"/documents/{bill}").text
+    assert 'value=""' in html.split('id="edit-title"')[1].split(">")[0]
+    assert 'placeholder="plain.txt"' in html

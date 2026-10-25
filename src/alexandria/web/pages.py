@@ -67,6 +67,13 @@ def _display_title(d) -> str:
     return display_title(title, uri, getattr(d, "content_type", "doc"))
 
 
+def _fallback_title(d) -> str:
+    """What a document shows with no title: its first source's filename."""
+    sources = getattr(d, "sources", None) or []
+    uri = sources[0]["source_uri"] if sources else None
+    return display_title(None, uri, getattr(d, "content_type", "doc"))
+
+
 def _highlight_snippet(s: str) -> str:
     """Turn PUA snippet sentinels into <mark> tags.
 
@@ -124,6 +131,7 @@ def build_page_routes(
     templates.env.globals["job_detail"] = _job_detail
     templates.env.globals["highlight_snippet"] = _highlight_snippet
     templates.env.globals["display_title"] = _display_title
+    templates.env.globals["fallback_title"] = _fallback_title
 
     cookie_max_age = cfg.web.session_max_age_days * 86400
     throttle = LoginThrottle()

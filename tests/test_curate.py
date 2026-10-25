@@ -123,6 +123,39 @@ def test_update_metadata_unknown_doc(cfg, conn):
     assert update_document_metadata("nope", conn, category="x") is False
 
 
+
+def _titles(conn, doc_id):
+    """(documents.title, documents_fts.title) for one document."""
+    return (conn.execute("SELECT title FROM documents WHERE id=?", (doc_id,)).fetchone()[0],
+            conn.execute("SELECT title FROM documents_fts WHERE doc_id=?", (doc_id,)).fetchone()[0])
+
+
+def test_update_metadata_sets_the_title_and_its_search_row(seeded):
+    _, conn = seeded
+    doc_id = conn.execute("SELECT id FROM documents WHERE category='bills'").fetchone()[0]
+    assert update_document_metadata(doc_id, conn, title="  March  electricity\nbill ") is True
+    assert _titles(conn, doc_id) == ("March electricity bill", "March electricity bill")
+    hits = conn.execute(
+        "SELECT doc_id FROM documents_fts WHERE documents_fts MATCH 'title:electricity'"
+    ).fetchall()
+    assert hits == [(doc_id,)]
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_update_metadata_blank_title_unsets_it(seeded, blank):
+    _, conn = seeded
+    doc_id = conn.execute("SELECT id FROM documents WHERE category='notes'").fetchone()[0]
+    assert _titles(conn, doc_id)[0] == "A short markdown note"     # from its H1
+    update_document_metadata(doc_id, conn, title=blank)
+    assert _titles(conn, doc_id) == (None, "")                     # as ingest stores no title
+
+
+def test_update_metadata_without_a_title_leaves_it(seeded):
+    _, conn = seeded
+    doc_id = conn.execute("SELECT id FROM documents WHERE category='notes'").fetchone()[0]
+    update_document_metadata(doc_id, conn, category="misc", tags=["x"])
+    assert _titles(conn, doc_id) == ("A short markdown note", "A short markdown note")
+
 # ---- category rename / delete --------------------------------------------
 
 
