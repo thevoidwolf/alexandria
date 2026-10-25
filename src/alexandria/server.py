@@ -503,6 +503,25 @@ def delete_tag_tool(name: str) -> dict[str, Any]:
 
 
 @_tool(DESTRUCTIVE)
+def set_title_tool(doc_id: str, title: str) -> dict[str, Any]:
+    """Set a document's title, e.g. when extraction found none or the wrong one.
+
+    Whitespace is tidied. An empty title clears it, so the document shows its
+    filename again. A later update to the document's content re-extracts it.
+
+    Returns {"updated": True, "title", "display_title"}, or {"updated": False,
+    "reason": ...} if the document is unknown.
+    """
+    _, conn = _get()
+    with _lock:
+        doc = (get_document(doc_id, conn)
+               if _update_document_metadata(doc_id, conn, title=title) else None)
+    if doc is None:
+        return {"updated": False, "reason": "unknown doc_id"}
+    return {"updated": True, "title": doc.title, "display_title": doc.display_title}
+
+
+@_tool(DESTRUCTIVE)
 def suggest_metadata_tool(
     doc_id: str, apply: bool = False
 ) -> dict[str, Any] | None:

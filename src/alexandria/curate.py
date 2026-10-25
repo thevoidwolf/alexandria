@@ -51,11 +51,14 @@ def update_document_metadata(
     *,
     category: str | None | type(...) = ...,
     tags: list[str] | None = None,
+    title: str | None | type(...) = ...,
 ) -> bool:
     """PATCH semantics: only apply the fields that were passed.
 
     ``category=...`` (Ellipsis) means "don't touch"; ``category=None`` means
     "unset". ``tags=None`` means "don't touch"; ``tags=[]`` empties the list.
+    ``title`` works like ``category``, and a blank one unsets it too, so the
+    document shows its filename again. A later content update re-extracts it.
     Returns False if the document doesn't exist.
     """
     exists = conn.execute(
@@ -70,6 +73,14 @@ def update_document_metadata(
             conn.execute(
                 "UPDATE documents SET category = ? WHERE id = ?",
                 (category, doc_id),
+            )
+        if title is not ...:
+            title = " ".join((title or "").split()) or None
+            conn.execute("UPDATE documents SET title = ? WHERE id = ?", (title, doc_id))
+            # Ingest stores "" for no title in the FTS row.
+            conn.execute(
+                "UPDATE documents_fts SET title = ? WHERE doc_id = ?",
+                (title or "", doc_id),
             )
         if tags is not None:
             conn.execute("DELETE FROM tags WHERE doc_id = ?", (doc_id,))
