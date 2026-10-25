@@ -18,6 +18,18 @@ class EmbeddingsConfig:
 
 
 @dataclass(frozen=True)
+class SearchConfig:
+    # Cross-encoder reranking of the top fused chunks. Off by default, and
+    # only the CLI uses it (``alexandria search --rerank``; ``rerank = true``
+    # makes that the CLI default). The MCP tools and web UI don't rerank:
+    # in the retrieval evals it gained nothing measurable, for about 13 s
+    # a query on CPU (evals/REPORT.md).
+    rerank: bool = False
+    rerank_model: str = "BAAI/bge-reranker-base"
+    rerank_top_n: int = 50                # fused chunks passed to the cross-encoder
+
+
+@dataclass(frozen=True)
 class ChunkingConfig:
     tokens: int = 800
     overlap: int = 100
@@ -138,6 +150,7 @@ class ClassifyConfig:
 class Config:
     home: Path
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
+    search: SearchConfig = field(default_factory=SearchConfig)
     chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
@@ -195,6 +208,7 @@ def load(home: Path | None = None) -> Config:
             data = tomllib.load(f)
 
     emb = EmbeddingsConfig(**(data.get("embeddings") or {}))
+    search = SearchConfig(**(data.get("search") or {}))
     chunk = ChunkingConfig(**(data.get("chunking") or {}))
     storage = StorageConfig(**(data.get("storage") or {}))
     http = HttpConfig(**(data.get("http") or {}))
@@ -231,6 +245,7 @@ def load(home: Path | None = None) -> Config:
     return Config(
         home=home,
         embeddings=emb,
+        search=search,
         chunking=chunk,
         storage=storage,
         http=http,

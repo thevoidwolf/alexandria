@@ -57,3 +57,14 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.8",
 ]
+# Retrieval evals (evals/). Not part of the package. Enable with:
+#   uv sync --group eval
+eval = [
+    "pyarrow>=17",
+    "ir-measures>=0.3",
+    "matplotlib>=3.9",
+]
+
+[tool.pytest.ini_options]
+# evals/ lives at the repo root, outside src/.
+pythonpath = ["."]

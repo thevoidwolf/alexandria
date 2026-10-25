@@ -1,0 +1,37 @@
+2311.04235	RuLES: Can LLMs Follow Simple Rules?
+2408.10943	SysBench
+2404.13208	The Instruction Hierarchy
+2502.15851	Control Illusion
+2310.11324	FormatSpread (prompt formatting sensitivity)
+2209.12711	Negated prompts
+2307.03172	Lost in the Middle
+2405.20947	OR-Bench
+2601.17642	Health-ORSC-Bench
+2605.05427	The Refusal–Compliance Tradeoff
+2312.14197	BIPIA (defending against indirect prompt injection)
+2406.13352	AgentDojo
+2610.03448	Passing the Test You Trained On
+2305.14627	ALCE (citations)
+2306.05685	Judging LLM-as-a-Judge (MT-Bench)
+2310.01783	Can LLMs provide useful feedback on research papers?
+2305.19118	Multi-Agent Debate (divergent thinking)
+2104.08663	BEIR
+2005.11401	Retrieval-Augmented Generation (Lewis et al.)
+2310.11511	Self-RAG
+2312.10997	RAG for LLMs: A Survey
+2112.01488	ColBERTv2
+2210.07316	MTEB
+2309.07597	C-Pack (BGE embeddings)
+2609.38473	Re-ranking and Late Interaction Drive Retrieval Quality
+2609.05637	Complementary Query Rewriting Under a Strong RAG Baseline
+2210.03629	ReAct
+2310.06770	SWE-bench
+2403.02691	InjecAgent
+2303.16634	G-Eval
+2309.15217	Ragas
+2305.17926	Large Language Models are not Fair Evaluators
+2405.01724	LLMs are Inconsistent and Biased Evaluators
+2601.05111	Agent-as-a-Judge
+2305.14325	Multiagent Debate for Factuality and Reasoning
+2512.10449	When Reject Turns into Accept (prompt injection on LLM reviewers)
+2004.04906	Dense Passage Retrieval

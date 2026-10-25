@@ -186,6 +186,10 @@ def search_cmd(
     tags: Optional[str] = typer.Option(None, "--tags", "-t", help="Comma-separated (AND)"),
     limit: int = typer.Option(10, "--limit", "-n"),
     mode: str = typer.Option("hybrid", "--mode", "-m", help="hybrid | fts | vec"),
+    rerank: Optional[bool] = typer.Option(
+        None, "--rerank/--no-rerank",
+        help="Re-order the top results with a cross-encoder (default: [search] rerank)",
+    ),
 ) -> None:
     """Search the corpus (hybrid FTS + vector by default)."""
     if mode not in SEARCH_MODES:
@@ -198,6 +202,7 @@ def search_cmd(
         query, conn, cfg,
         category=category, tags=split_tags(tags),
         limit=limit, mode=mode,  # type: ignore[arg-type]
+        rerank=cfg.search.rerank if rerank is None else rerank,
     )
 
     if not hits:
@@ -213,7 +218,7 @@ def search_cmd(
 
     for h in hits:
         table.add_row(
-            f"{h.score:.4f}",
+            f"{h.score if h.rerank_score is None else h.rerank_score:.4f}",
             h.content_type,
             h.category or "",
             (h.title or "")[:40],

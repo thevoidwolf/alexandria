@@ -1,0 +1,498 @@
+{
+  "2004.04906": {
+    "authors": [
+      "Vladimir Karpukhin",
+      "Barlas Oğuz",
+      "Sewon Min",
+      "Patrick Lewis",
+      "Ledell Wu",
+      "Sergey Edunov",
+      "Danqi Chen",
+      "Wen-tau Yih"
+    ],
+    "sha256": "3e67fc1a9977715acf722d85f0b7d124b03715e975f6310a4d6c12094190912f",
+    "title": "Dense Passage Retrieval for Open-Domain Question Answering",
+    "version": 3
+  },
+  "2005.11401": {
+    "authors": [
+      "Patrick Lewis",
+      "Ethan Perez",
+      "Aleksandra Piktus",
+      "Fabio Petroni",
+      "Vladimir Karpukhin",
+      "Naman Goyal",
+      "Heinrich Küttler",
+      "Mike Lewis",
+      "Wen-tau Yih",
+      "Tim Rocktäschel",
+      "Sebastian Riedel",
+      "Douwe Kiela"
+    ],
+    "sha256": "23e3249e9a1e75418d82efecab0ea8c4d033b89c93742f63208d47ce01f21233",
+    "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+    "version": 4
+  },
+  "2104.08663": {
+    "authors": [
+      "Nandan Thakur",
+      "Nils Reimers",
+      "Andreas Rücklé",
+      "Abhishek Srivastava",
+      "Iryna Gurevych"
+    ],
+    "sha256": "1925755aeb627123d1a63c66f02e5aa2432f7e92751a02bea7c8c3b6bbb6ec33",
+    "title": "BEIR: A Heterogenous Benchmark for Zero-shot Evaluation of Information Retrieval Models",
+    "version": 4
+  },
+  "2112.01488": {
+    "authors": [
+      "Keshav Santhanam",
+      "Omar Khattab",
+      "Jon Saad-Falcon",
+      "Christopher Potts",
+      "Matei Zaharia"
+    ],
+    "sha256": "46e0a2712eabf9e0b9486120356a2110f65516fa7e0d75c35e9ee3eef9ea78c0",
+    "title": "ColBERTv2: Effective and Efficient Retrieval via Lightweight Late Interaction",
+    "version": 3
+  },
+  "2209.12711": {
+    "authors": [
+      "Joel Jang",
+      "Seonghyeon Ye",
+      "Minjoon Seo"
+    ],
+    "sha256": "02da07951e05df1810c41f2ebadd052f2054a542631e9477611da2005f044e58",
+    "title": "Can Large Language Models Truly Understand Prompts? A Case Study with Negated Prompts",
+    "version": 1
+  },
+  "2210.03629": {
+    "authors": [
+      "Shunyu Yao",
+      "Jeffrey Zhao",
+      "Dian Yu",
+      "Nan Du",
+      "Izhak Shafran",
+      "Karthik Narasimhan",
+      "Yuan Cao"
+    ],
+    "sha256": "f285b0971ae4a790e402fb93966bed3adde2cf0a04977d08b2b40d6ab0cace69",
+    "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+    "version": 3
+  },
+  "2210.07316": {
+    "authors": [
+      "Niklas Muennighoff",
+      "Nouamane Tazi",
+      "Loïc Magne",
+      "Nils Reimers"
+    ],
+    "sha256": "bfd15786180a6546e5bf1361fe42356a884517a6497c27ef6994f444be75e91f",
+    "title": "MTEB: Massive Text Embedding Benchmark",
+    "version": 3
+  },
+  "2303.16634": {
+    "authors": [
+      "Yang Liu",
+      "Dan Iter",
+      "Yichong Xu",
+      "Shuohang Wang",
+      "Ruochen Xu",
+      "Chenguang Zhu"
+    ],
+    "sha256": "3a822b8646dccda73b01eda9b07420072daf7601cb0d02d9bbc3b38325ab2fd2",
+    "title": "G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment",
+    "version": 3
+  },
+  "2305.14325": {
+    "authors": [
+      "Yilun Du",
+      "Shuang Li",
+      "Antonio Torralba",
+      "Joshua B. Tenenbaum",
+      "Igor Mordatch"
+    ],
+    "sha256": "b302ff15202dc3cda03f40ea1ac92b29e1519978540b345af92991f6d3e619b4",
+    "title": "Improving Factuality and Reasoning in Language Models through Multiagent Debate",
+    "version": 1
+  },
+  "2305.14627": {
+    "authors": [
+      "Tianyu Gao",
+      "Howard Yen",
+      "Jiatong Yu",
+      "Danqi Chen"
+    ],
+    "sha256": "ac8809fe3ca1d52a413f41ef97afd71c43924944d512c90477ec0c28f2ea3a4d",
+    "title": "Enabling Large Language Models to Generate Text with Citations",
+    "version": 2
+  },
+  "2305.17926": {
+    "authors": [
+      "Peiyi Wang",
+      "Lei Li",
+      "Liang Chen",
+      "Zefan Cai",
+      "Dawei Zhu",
+      "Binghuai Lin",
+      "Yunbo Cao",
+      "Qi Liu",
+      "Tianyu Liu",
+      "Zhifang Sui"
+    ],
+    "sha256": "93f2f3c4cab37ff6237ed55b89f6b28c3b8eceed433a71d8183684b5ff4cb52d",
+    "title": "Large Language Models are not Fair Evaluators",
+    "version": 2
+  },
+  "2305.19118": {
+    "authors": [
+      "Tian Liang",
+      "Zhiwei He",
+      "Wenxiang Jiao",
+      "Xing Wang",
+      "Yan Wang",
+      "Rui Wang",
+      "Yujiu Yang",
+      "Shuming Shi",
+      "Zhaopeng Tu"
+    ],
+    "sha256": "7696fb358c8a8ba982a314b95269485b49b5ab830eec3e2f217d89f71e541c17",
+    "title": "Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate",
+    "version": 4
+  },
+  "2306.05685": {
+    "authors": [
+      "Lianmin Zheng",
+      "Wei-Lin Chiang",
+      "Ying Sheng",
+      "Siyuan Zhuang",
+      "Zhanghao Wu",
+      "Yonghao Zhuang",
+      "Zi Lin",
+      "Zhuohan Li",
+      "Dacheng Li",
+      "Eric P. Xing",
+      "Hao Zhang",
+      "Joseph E. Gonzalez",
+      "Ion Stoica"
+    ],
+    "sha256": "1574982845157569b85c1214bfa9987000384d7a5e3b5fbdcc5a29afec59cb81",
+    "title": "Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena",
+    "version": 4
+  },
+  "2307.03172": {
+    "authors": [
+      "Nelson F. Liu",
+      "Kevin Lin",
+      "John Hewitt",
+      "Ashwin Paranjape",
+      "Michele Bevilacqua",
+      "Fabio Petroni",
+      "Percy Liang"
+    ],
+    "sha256": "653b29619eae2ae4b361d7bdcdc06db4bedcb1b0eabe31814036beca8c1af0b1",
+    "title": "Lost in the Middle: How Language Models Use Long Contexts",
+    "version": 3
+  },
+  "2309.07597": {
+    "authors": [
+      "Shitao Xiao",
+      "Zheng Liu",
+      "Peitian Zhang",
+      "Niklas Muennighoff",
+      "Defu Lian",
+      "Jian-Yun Nie"
+    ],
+    "sha256": "a5e1d16924173006b0fbb1abf169e69231465c71ab43c03770266bb8d592d849",
+    "title": "C-Pack: Packed Resources For General Chinese Embeddings",
+    "version": 5
+  },
+  "2309.15217": {
+    "authors": [
+      "Shahul Es",
+      "Jithin James",
+      "Luis Espinosa-Anke",
+      "Steven Schockaert"
+    ],
+    "sha256": "6c24762a3f277fd120ed1adf34b01420ecf92f18ff6d1b5435fa0a09cb804ecb",
+    "title": "Ragas: Automated Evaluation of Retrieval Augmented Generation",
+    "version": 2
+  },
+  "2310.01783": {
+    "authors": [
+      "Weixin Liang",
+      "Yuhui Zhang",
+      "Hancheng Cao",
+      "Binglu Wang",
+      "Daisy Ding",
+      "Xinyu Yang",
+      "Kailas Vodrahalli",
+      "Siyu He",
+      "Daniel Smith",
+      "Yian Yin",
+      "Daniel McFarland",
+      "James Zou"
+    ],
+    "sha256": "6f98dd7d318d5e08b9872e17305f5ca485bd7bbc33fcb8c1ab6542d1fc3dbd0e",
+    "title": "Can large language models provide useful feedback on research papers? A large-scale empirical analysis",
+    "version": 1
+  },
+  "2310.06770": {
+    "authors": [
+      "Carlos E. Jimenez",
+      "John Yang",
+      "Alexander Wettig",
+      "Shunyu Yao",
+      "Kexin Pei",
+      "Ofir Press",
+      "Karthik Narasimhan"
+    ],
+    "sha256": "f7e8e1df64129742b8199a21a042734519a823a1dafd6f48f8f3ddcfb48ee296",
+    "title": "SWE-bench: Can Language Models Resolve Real-World GitHub Issues?",
+    "version": 3
+  },
+  "2310.11324": {
+    "authors": [
+      "Melanie Sclar",
+      "Yejin Choi",
+      "Yulia Tsvetkov",
+      "Alane Suhr"
+    ],
+    "sha256": "997d46a1fdb83e3d09d0146f70e891bb1d8e8c49153404054bab61735db52aae",
+    "title": "Quantifying Language Models' Sensitivity to Spurious Features in Prompt Design or: How I learned to start worrying about prompt formatting",
+    "version": 2
+  },
+  "2310.11511": {
+    "authors": [
+      "Akari Asai",
+      "Zeqiu Wu",
+      "Yizhong Wang",
+      "Avirup Sil",
+      "Hannaneh Hajishirzi"
+    ],
+    "sha256": "d9eaa1398abac0df67a9d0933a5bf8b6d9d83d2e72da2a486073cd842dd52978",
+    "title": "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+    "version": 1
+  },
+  "2311.04235": {
+    "authors": [
+      "Norman Mu",
+      "Sarah Chen",
+      "Zifan Wang",
+      "Sizhe Chen",
+      "David Karamardian",
+      "Lulwa Aljeraisy",
+      "Basel Alomair",
+      "Dan Hendrycks",
+      "David Wagner"
+    ],
+    "sha256": "90f093855d109a55818bae9919fa7e9c46acc7bbc29289d0c678175a975b359e",
+    "title": "Can LLMs Follow Simple Rules?",
+    "version": 3
+  },
+  "2312.10997": {
+    "authors": [
+      "Yunfan Gao",
+      "Yun Xiong",
+      "Xinyu Gao",
+      "Kangxiang Jia",
+      "Jinliu Pan",
+      "Yuxi Bi",
+      "Yi Dai",
+      "Jiawei Sun",
+      "Meng Wang",
+      "Haofen Wang"
+    ],
+    "sha256": "396a0fadeb4cd40f5c8ccc36b73a0815f6cb4d7f6bfa53b6c48c1f9aba7c7e02",
+    "title": "Retrieval-Augmented Generation for Large Language Models: A Survey",
+    "version": 5
+  },
+  "2312.14197": {
+    "authors": [
+      "Jingwei Yi",
+      "Yueqi Xie",
+      "Bin Zhu",
+      "Emre Kiciman",
+      "Guangzhong Sun",
+      "Xing Xie",
+      "Fangzhao Wu"
+    ],
+    "sha256": "3f8f991fc3e3f507acfad759dfa76e6f94f8bcf49e189def3ddb99a4f64efbeb",
+    "title": "Benchmarking and Defending Against Indirect Prompt Injection Attacks on Large Language Models",
+    "version": 4
+  },
+  "2403.02691": {
+    "authors": [
+      "Qiusi Zhan",
+      "Zhixiang Liang",
+      "Zifan Ying",
+      "Daniel Kang"
+    ],
+    "sha256": "49e6e6a4a00c797a772ef905a154c0839426655027d5fa0ce6b632e6c1db2bfb",
+    "title": "InjecAgent: Benchmarking Indirect Prompt Injections in Tool-Integrated Large Language Model Agents",
+    "version": 3
+  },
+  "2404.13208": {
+    "authors": [
+      "Eric Wallace",
+      "Kai Xiao",
+      "Reimar Leike",
+      "Lilian Weng",
+      "Johannes Heidecke",
+      "Alex Beutel"
+    ],
+    "sha256": "fbc2d65e913e75b8f0ae74e83e3443c36a727636d1038a071a2f10d8be63dac4",
+    "title": "The Instruction Hierarchy: Training LLMs to Prioritize Privileged Instructions",
+    "version": 1
+  },
+  "2405.01724": {
+    "authors": [
+      "Rickard Stureborg",
+      "Dimitris Alikaniotis",
+      "Yoshi Suhara"
+    ],
+    "sha256": "ce96e32b3c95645e7238578951c602fc46ef488ba25a2c90fa95ad9cea836e0f",
+    "title": "Large Language Models are Inconsistent and Biased Evaluators",
+    "version": 1
+  },
+  "2405.20947": {
+    "authors": [
+      "Justin Cui",
+      "Wei-Lin Chiang",
+      "Ion Stoica",
+      "Cho-Jui Hsieh"
+    ],
+    "sha256": "1a4c7b60301abcad795fc63ac88bc04534f46cfd707f8ad2824993a87d402792",
+    "title": "OR-Bench: An Over-Refusal Benchmark for Large Language Models",
+    "version": 5
+  },
+  "2406.13352": {
+    "authors": [
+      "Edoardo Debenedetti",
+      "Jie Zhang",
+      "Mislav Balunović",
+      "Luca Beurer-Kellner",
+      "Marc Fischer",
+      "Florian Tramèr"
+    ],
+    "sha256": "349884fffbf43282591c5accffd57bb651632f38e412fe303114941bdd111b05",
+    "title": "AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents",
+    "version": 3
+  },
+  "2408.10943": {
+    "authors": [
+      "Yanzhao Qin",
+      "Tao Zhang",
+      "Tao Zhang",
+      "Yanjun Shen",
+      "Wenjing Luo",
+      "Haoze Sun",
+      "Yan Zhang",
+      "Yujing Qiao",
+      "Weipeng Chen",
+      "Zenan Zhou",
+      "Wentao Zhang",
+      "Bin Cui"
+    ],
+    "sha256": "192a6383d66f9075c26bff148774396da331daad4c69e1dafea9222fc20c10ed",
+    "title": "SysBench: Can Large Language Models Follow System Messages?",
+    "version": 2
+  },
+  "2502.15851": {
+    "authors": [
+      "Yilin Geng",
+      "Haonan Li",
+      "Honglin Mu",
+      "Xudong Han",
+      "Timothy Baldwin",
+      "Omri Abend",
+      "Eduard Hovy",
+      "Lea Frermann"
+    ],
+    "sha256": "2cdfb7d428a18bafbbab27d4891d9356dbf820d3edd345f453842488b5f15640",
+    "title": "Control Illusion: The Failure of Instruction Hierarchies in Large Language Models",
+    "version": 4
+  },
+  "2512.10449": {
+    "authors": [
+      "Devanshu Sahoo",
+      "Manish Prasad",
+      "Vasudev Majhi",
+      "Jahnvi Singh",
+      "Vinay Chamola",
+      "Yash Sinha",
+      "Murari Mandal",
+      "Dhruv Kumar"
+    ],
+    "sha256": "d55a4071b109e9a1ee5fdb7d0195977114dd34e9015b86128c5f87a0586610ae",
+    "title": "When Reject Turns into Accept: Quantifying the Vulnerability of LLM-Based Scientific Reviewers to Indirect Prompt Injection",
+    "version": 3
+  },
+  "2601.05111": {
+    "authors": [
+      "Runyang You",
+      "Hongru Cai",
+      "Caiqi Zhang",
+      "Qiancheng Xu",
+      "Meng Liu",
+      "Tiezheng Yu",
+      "Yongqi Li",
+      "Wenjie Li"
+    ],
+    "sha256": "338343e5992f61154a6fa774ed6f9bc0ee0c24472f2573ba68c903b81d3c8cfd",
+    "title": "Agent-as-a-Judge",
+    "version": 1
+  },
+  "2601.17642": {
+    "authors": [
+      "Zhihao Zhang",
+      "Liting Huang",
+      "Guanghao Wu",
+      "Preslav Nakov",
+      "Heng Ji",
+      "Usman Naseem"
+    ],
+    "sha256": "00256fdd1c84b0d859c97e3446ca7452bc3522ae935bcd0a29b63aa2d92420b2",
+    "title": "Health-ORSC-Bench: A Benchmark for Measuring Over-Refusal and Safety Completion in Health Context",
+    "version": 2
+  },
+  "2605.05427": {
+    "authors": [
+      "Alif Al Hasan",
+      "Sumon Biswas"
+    ],
+    "sha256": "2cff763194355e1fb98d4317fc7ecdb954ec1028cf701c4b96d91a15b466719e",
+    "title": "The Refusal--Compliance Tradeoff: A Large-Scale Safety Behavior Audit of Large Language Models",
+    "version": 2
+  },
+  "2609.05637": {
+    "authors": [
+      "Sara Shanian",
+      "Xiaoqin Yi",
+      "Pavlo Ruban",
+      "Kurt MacDonald"
+    ],
+    "sha256": "5a3fcc5a1c4abf96c8a8ea5de825e84b570b4d5da733ab32115f9d6e40131222",
+    "title": "Better Together: Complementary Query Rewriting Under a Strong RAG Baseline",
+    "version": 2
+  },
+  "2609.38473": {
+    "authors": [
+      "Bhagyesh Rathi",
+      "Eshan Chawla",
+      "William B. Andreopoulos"
+    ],
+    "sha256": "78307b348c36059b1de58971110b789c94387e407da74bb3282a03336c7947a3",
+    "title": "Re-ranking and Late Interaction Drive Retrieval Quality: A Controlled Comparison of RAG Strategies for Scientific Question Answering",
+    "version": 1
+  },
+  "2610.03448": {
+    "authors": [
+      "Zhuowen Liu"
+    ],
+    "sha256": "3c0c97f77ddf772c2ccf2b2af8f928743c314e18d7ba1cbfe82d2db693faf3a3",
+    "title": "Passing the Test You Trained On: Re-evaluating Prompt-Injection Detectors for LLM Agents",
+    "version": 1
+  }
+}

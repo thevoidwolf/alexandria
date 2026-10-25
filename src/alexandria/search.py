@@ -8,9 +8,16 @@ from typing import Literal, get_args
 from alexandria.catalog import display_title
 from alexandria.config import Config
 from alexandria.ingest.embed import embed_texts
+from alexandria.rerank import rerank_scores
 
 SearchMode = Literal["hybrid", "fts", "vec"]
 SEARCH_MODES: tuple[str, ...] = get_args(SearchMode)
+
+# How FTS combines a query's words. "and" (the default) runs the query as
+# FTS5 syntax, falling back to quoted terms, so every word must match; "or"
+# quotes every word and joins them with OR, so any word can (evals/REPORT.md).
+FtsOperator = Literal["and", "or"]
+FTS_OPERATORS: tuple[str, ...] = get_args(FtsOperator)
 
 # RRF constant. Anserini's default; robust across corpora, no tuning knob.
 RRF_K = 60
@@ -41,9 +48,14 @@ class SearchHit:
     # None means the chunk didn't appear in that retriever's window.
     fts_rank: int | None = None
     vec_rank: int | None = None
-    # Convenience view of which retrievers surfaced this chunk. A hit in
-    # both is materially more confident than a hit in either alone.
+    # Convenience view of which retrievers surfaced this chunk. In the
+    # retrieval evals (evals/REPORT.md, H4) a top-ranked hit in both was
+    # much more often relevant than one only the vector side found; no
+    # FTS-only hit reached the top 10, so that comparison is untested.
     matched_in: tuple[str, ...] = ()
+    # Cross-encoder score when the search reranked and this chunk was among
+    # the ``rerank_top_n`` it scored; None otherwise. Higher is better.
+    rerank_score: float | None = None
 
 
 def _serialize_vec(vec) -> bytes:
@@ -88,18 +100,19 @@ def _eligible_rowids_subquery(
     return sql, params
 
 
-def _quote_terms(query: str) -> str | None:
-    """Rewrite free text as an FTS5 expression of literal terms (implicit AND).
+def _quote_terms(query: str, joiner: str = " ") -> str | None:
+    """Rewrite free text as an FTS5 expression of literal terms.
 
     Each whitespace-separated word becomes a quoted string, so punctuation
     is handed to the tokenizer instead of the query parser: ``half-life``
     becomes the phrase "half life" rather than a column filter. Words with
     no letters or digits are dropped. Returns None if nothing is left.
+    The default joiner is FTS5's implicit AND; ``" OR "`` matches any word.
     """
     terms = [t for t in query.split() if any(ch.isalnum() for ch in t)]
     if not terms:
         return None
-    return " ".join('"' + t.replace('"', '""') + '"' for t in terms)
+    return joiner.join('"' + t.replace('"', '""') + '"' for t in terms)
 
 
 def _fts_search(
@@ -107,6 +120,7 @@ def _fts_search(
     query: str,
     eligible: tuple[str, list] | None,
     limit: int,
+    operator: FtsOperator = "and",
 ) -> list[tuple[int, str, str, str]]:
     """Return [(rowid, chunk_id, doc_id, snippet)] ordered by BM25 rank.
 
@@ -114,6 +128,7 @@ def _fts_search(
     phrases, ``prefix*``, ``OR`` and ``NEAR()``. Ordinary text often isn't
     valid syntax (``what's``, ``half-life``, ``C++``), so on a syntax error
     it is retried as quoted literal terms instead of yielding nothing.
+    With ``operator="or"`` only the quoted terms, OR-joined, are run.
     """
     sql = (
         "SELECT rowid, chunk_id, doc_id, "
@@ -128,11 +143,12 @@ def _fts_search(
     sql += " ORDER BY rank LIMIT ?"
     params.append(limit)
 
-    try:
-        return conn.execute(sql, [query, *params]).fetchall()
-    except sqlite3.OperationalError:
-        pass
-    quoted = _quote_terms(query)
+    if operator == "and":
+        try:
+            return conn.execute(sql, [query, *params]).fetchall()
+        except sqlite3.OperationalError:
+            pass
+    quoted = _quote_terms(query, " OR " if operator == "or" else " ")
     if quoted is None:
         return []
     try:
@@ -202,12 +218,12 @@ def format_snippet_plain(s: str) -> str:
     return s.replace(SNIPPET_MARK_START, "").replace(SNIPPET_MARK_END, "")
 
 
-def _rrf(rankings: list[list[int]]) -> dict[int, float]:
+def _rrf(rankings: list[list[int]], k: int = RRF_K) -> dict[int, float]:
     """Reciprocal rank fusion. Input: list of ranked rowid lists. Output: rowid → fused score."""
     scores: dict[int, float] = {}
     for ranked in rankings:
         for rank, rowid in enumerate(ranked, start=1):
-            scores[rowid] = scores.get(rowid, 0.0) + 1.0 / (RRF_K + rank)
+            scores[rowid] = scores.get(rowid, 0.0) + 1.0 / (k + rank)
     return scores
 
 
@@ -219,15 +235,30 @@ def search(
     tags: list[str] | None = None,
     limit: int = 10,
     mode: SearchMode = "hybrid",
+    rrf_k: int = RRF_K,
+    fts_operator: FtsOperator = "and",
+    rerank: bool = False,
 ) -> list[SearchHit]:
-    """Hybrid keyword + semantic retrieval, RRF-fused, category/tag filtered."""
+    """Hybrid keyword + semantic retrieval, RRF-fused, category/tag filtered.
+
+    ``rrf_k`` and ``fts_operator`` exist for the retrieval evals; their
+    defaults are the shipped behaviour. ``rerank`` re-orders the top
+    ``cfg.search.rerank_top_n`` fused chunks by a cross-encoder's score,
+    keeps the rest in fused order behind them, then applies ``limit``.
+    """
+    if fts_operator not in FTS_OPERATORS:
+        raise ValueError(f"fts_operator must be one of {FTS_OPERATORS}, got {fts_operator!r}")
     if not query.strip():
         return []
 
     eligible = _eligible_rowids_subquery(category, tags)
-    over_fetch = max(limit * 3, 30)
+    # Reranking needs top-N candidates, so it can widen the fetch.
+    over_fetch = max(limit * 3, 30, cfg.search.rerank_top_n if rerank else 0)
 
-    fts_rows = _fts_search(conn, query, eligible, over_fetch) if mode in ("hybrid", "fts") else []
+    fts_rows = (
+        _fts_search(conn, query, eligible, over_fetch, fts_operator)
+        if mode in ("hybrid", "fts") else []
+    )
     fts_by_rowid: dict[int, str] = {r[0]: r[3] for r in fts_rows}  # rowid → snippet
     fts_ranked = [r[0] for r in fts_rows]
 
@@ -240,22 +271,39 @@ def search(
         vec_ranked = [r[0] for r in vec_rows]
 
     if mode == "fts":
-        fused = {rowid: 1.0 / (RRF_K + i + 1) for i, rowid in enumerate(fts_ranked)}
+        fused = {rowid: 1.0 / (rrf_k + i + 1) for i, rowid in enumerate(fts_ranked)}
     elif mode == "vec":
-        fused = {rowid: 1.0 / (RRF_K + i + 1) for i, rowid in enumerate(vec_ranked)}
+        fused = {rowid: 1.0 / (rrf_k + i + 1) for i, rowid in enumerate(vec_ranked)}
     else:
-        fused = _rrf([fts_ranked, vec_ranked])
+        fused = _rrf([fts_ranked, vec_ranked], rrf_k)
 
     # Per-retriever rank lookup, 1-indexed. Populated for every fetched
     # rowid regardless of mode; missing means "not in this retriever's window".
     fts_rank_by_rowid = {rowid: i + 1 for i, rowid in enumerate(fts_ranked)}
     vec_rank_by_rowid = {rowid: i + 1 for i, rowid in enumerate(vec_ranked)}
 
-    ordered = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    ordered = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
+
+    rows: dict[int, tuple] = {}
+    rerank_by_rowid: dict[int, float] = {}
+    if rerank and ordered:
+        head = ordered[:cfg.search.rerank_top_n]
+        for rowid, _ in head:
+            if (row := _load_hit(conn, rowid)) is not None:
+                rows[rowid] = row
+        head = [kv for kv in head if kv[0] in rows]
+        scores = rerank_scores(
+            query, [rows[rowid][2] for rowid, _ in head],
+            cfg.search.rerank_model, cfg.embeddings.device,
+        ) if head else []
+        rerank_by_rowid = {rowid: s for (rowid, _), s in zip(head, scores)}
+        # A stable sort, so equal scores keep their fused order.
+        head.sort(key=lambda kv: rerank_by_rowid[kv[0]], reverse=True)
+        ordered = head + ordered[cfg.search.rerank_top_n:]
 
     hits: list[SearchHit] = []
-    for rowid, score in ordered:
-        row = _load_hit(conn, rowid)
+    for rowid, score in ordered[:limit]:
+        row = rows.get(rowid) or _load_hit(conn, rowid)
         if row is None:
             continue
         chunk_id, doc_id, chunk_text, title, doc_category, source_uri, content_type = row
@@ -284,6 +332,7 @@ def search(
                 fts_rank=fts_rank,
                 vec_rank=vec_rank,
                 matched_in=tuple(matched),
+                rerank_score=rerank_by_rowid.get(rowid),
             )
         )
     return hits

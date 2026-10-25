@@ -65,3 +65,20 @@ def fake_embed(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr("alexandria.ingest.orchestrator.embed_texts", _fake)
     monkeypatch.setattr("alexandria.search.embed_texts", _fake)
+
+
+@pytest.fixture
+def fake_rerank(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, list[str]]]:
+    """Replace the cross-encoder with a scorer that counts query words in the text.
+
+    Returns the list of (query, texts) calls it received.
+    """
+    calls: list[tuple[str, list[str]]] = []
+
+    def _fake(query, texts, model, device):
+        calls.append((query, list(texts)))
+        words = query.casefold().split()
+        return [float(sum(t.casefold().count(w) for w in words)) for t in texts]
+
+    monkeypatch.setattr("alexandria.search.rerank_scores", _fake)
+    return calls
