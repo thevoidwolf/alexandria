@@ -80,6 +80,11 @@ def test_search_with_query_shows_results(client):
     assert 'href="/documents/' in r.text
 
 
+def test_search_results_show_vector_similarity(client, seeded):
+    text = seeded.execute("SELECT text FROM chunks ORDER BY id LIMIT 1").fetchone()[0]
+    r = client.get("/search", params={"q": text, "mode": "vec"})
+    assert "sim 1.00" in r.text          # the chunk's own text, under the fake embedder
+
 def test_search_filters_persist_in_form(client):
     r = client.get("/search?q=whatever&category=bills&tags=utility&mode=fts")
     assert r.status_code == 200

@@ -263,15 +263,20 @@ def search_tool(
         mode: "hybrid" (default), "fts" (keyword only), or "vec" (semantic only).
 
     Returns a list of hits, each with chunk_id, doc_id, score, fts_rank,
-    vec_rank, matched_in, snippet, title, display_title, category, tags,
-    source_uri, and content_type.
+    vec_rank, vec_similarity, matched_in, snippet, title, display_title,
+    category, tags, source_uri, and content_type.
 
     Confidence signal: RRF flattens ``score`` into a narrow band
     (~1/(60+rank)), so use ``fts_rank`` / ``vec_rank`` (1-indexed within
     each retriever's over-fetch window; None if not in that window) and
     ``matched_in`` (e.g. ``["fts", "vec"]``) to gauge how strong a hit is.
     A chunk in ``matched_in=["fts", "vec"]`` with both ranks near 1 is
-    much stronger than one with only a single low rank.
+    much stronger than one with only a single low rank. Ranks are relative
+    to the other hits; ``vec_similarity`` isn't: it is the cosine similarity
+    of query and chunk (None if the vector side didn't return the chunk).
+    With the default BGE model, on-topic chunks tend to score around 0.75
+    and unrelated text still around 0.6, so a best hit near 0.6 hints that
+    nothing relevant was found. No cut-off has been measured.
 
     Title fields: ``title`` is the raw extractor metadata (may be null).
     ``display_title`` is always populated — prefer it for user-facing
