@@ -56,6 +56,12 @@ class SearchHit:
     # Cross-encoder score when the search reranked and this chunk was among
     # the ``rerank_top_n`` it scored; None otherwise. Higher is better.
     rerank_score: float | None = None
+    # Cosine similarity of the query and chunk embeddings; None if the vector
+    # side didn't return the chunk. Unlike the RRF score it isn't relative to
+    # the other hits. BGE models put even unrelated text around 0.6, so it is
+    # for comparing, not a probability; no "nothing relevant" cut-off has
+    # been measured.
+    vec_similarity: float | None = None
 
 
 def _serialize_vec(vec) -> bytes:
@@ -263,12 +269,16 @@ def search(
     fts_ranked = [r[0] for r in fts_rows]
 
     vec_ranked: list[int] = []
+    vec_similarity_by_rowid: dict[int, float] = {}
     if mode in ("hybrid", "vec"):
         q_vec = embed_texts(
             [cfg.embeddings.query_instruction + query], cfg.embeddings
         )[0]
         vec_rows = _vec_search(conn, _serialize_vec(q_vec), eligible, over_fetch)
         vec_ranked = [r[0] for r in vec_rows]
+        # sqlite-vec gives L2 distance; embeddings are unit vectors, so the
+        # cosine similarity is 1 - d²/2.
+        vec_similarity_by_rowid = {rowid: 1.0 - d * d / 2 for rowid, d in vec_rows}
 
     if mode == "fts":
         fused = {rowid: 1.0 / (rrf_k + i + 1) for i, rowid in enumerate(fts_ranked)}
@@ -333,6 +343,7 @@ def search(
                 vec_rank=vec_rank,
                 matched_in=tuple(matched),
                 rerank_score=rerank_by_rowid.get(rowid),
+                vec_similarity=vec_similarity_by_rowid.get(rowid),
             )
         )
     return hits
