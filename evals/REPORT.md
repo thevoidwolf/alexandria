@@ -130,3 +130,72 @@ Recorded before any papers-set results exist.
   `BAAI/bge-reranker-base` on CPU over the top 50 fused chunks, the brief's
   defaults. The cross-encoder reads at most 512 tokens of query and chunk
   together, so it truncates long chunks, as the embedder does (P2).
+
+## Decisions before the phase-4 grades
+
+Recorded on 2026-10-25, after every variant had run on both sets and
+before any of the 472 (query, paper) pairs new to the papers pool were
+graded. By then the SciFact results for every variant had been seen, as
+had the papers results for the three graded baselines and the other
+variants' papers scores with their ungraded papers counted as not relevant
+(`judged@10` 51–84%), which say little about those variants yet. The
+phase-4 grades themselves had not been seen.
+
+- **The rest runs on a second machine.** The machine that produced the
+  committed rows is unavailable for about a week, so the remaining phases
+  run on another (Ryzen 7 5800X, WSL2). Committed rows are not re-run: the
+  judge reads passages by their stored chunk positions, and `--rescore`
+  scores rows without searching, so rankings and latencies stay those of
+  the first machine. The four papers indexes rebuilt here have the same
+  cache keys as those the rows came from, which both tools check, and
+  re-running all twelve papers variants here into a scratch folder
+  reproduced every committed row's top 10, chunk positions and retriever
+  ranks exactly. Any new timing is reported separately, with its hardware.
+- **43 queries, not 50.** The brief targeted about 50. The set stays at
+  43, on Voidwolf's call: every type is covered, with 12 paraphrases (the
+  target) and 5 `no-answer`. Seven more queries would narrow the
+  confidence intervals by about 7% (√(43/50) ≈ 0.93), but would mean
+  re-running every papers variant and another round of grading, and they
+  would be written knowing where search fails.
+- **q42 keeps its type and its grade.** It was written as `no-answer`, and
+  the blind judging pass graded one paper 1 for it (Health-ORSC-Bench,
+  2601.17642). Neither changes now: the type was set before any run and the
+  grade was given blind. The no-answer analysis counts it as answerable,
+  with a note. A question written to have no answer that turns out to have
+  a partial one is a small finding about writing such questions.
+- **c300 stands.** No change to it was recorded before the papers results,
+  as its entry above required.
+- **Decision rules, set before the grades they apply to.** The brief
+  leaves three product calls to Voidwolf until the results are in. Each
+  gets its rule now, judged on the papers set by the nDCG@10 difference
+  from `hybrid`, with the paired bootstrap 95% CI used throughout. None of
+  the changes is made on this branch; each would be its own pull request.
+  - *Reranking in the MCP tools.* Only if `hybrid+rerank`'s CI lies
+    entirely above zero. Then it becomes an opt-in `rerank` parameter on
+    `search_tool`, off by default, once its latency has been measured on a
+    GPU. Otherwise it stays CLI-only, and the README says why.
+  - *OR in keyword search.* The candidate is a fallback rather than either
+    measured variant: run the query with AND, as now, and only if that
+    finds nothing, run the OR expression frozen above. Where AND matches,
+    this is exactly `hybrid`; where AND finds nothing, it is exactly
+    `hybrid-or` (same FTS list, vector list and fusion). So it is scored
+    from those two variants' rows without a new run: `hybrid-or`'s row for
+    each query where `hybrid` had no FTS hits (`n_fts` = 0), `hybrid`'s row
+    otherwise. Its latency comes from the same rows, which leaves out the
+    failed AND attempt (under a millisecond on SciFact). It becomes the
+    default if its CI's lower bound is above −0.02. It fixes a behaviour,
+    natural-language queries silently falling back to vector-only search
+    (P1), so it needs to show it costs nothing, not that it gains. The same
+    change would stop reading an uppercase `OR`, `AND` or `NOT` in ordinary
+    text as an FTS5 operator.
+
+    *Disclosure:* the fallback is exploratory, not one of the
+    pre-registered variants, and its SciFact score was computed and seen
+    before this rule was set: nDCG@10 0.7327, +0.0108 [−0.0154, +0.0363]
+    against `hybrid`; on queries of 5+ words, +0.0120 [−0.0137, +0.0373].
+    H6 is still reported as registered, on `hybrid-or`.
+  - *Chunk size.* The default changes only if `hybrid-c200` or
+    `hybrid-c300` has a CI entirely above zero. If one does, chunks are
+    sized by the embedding model's tokens rather than by words, since even
+    300-word chunks overflow its 512-token window 37.6% of the time on this
+    set, and the change comes with a way to re-index an existing corpus.
