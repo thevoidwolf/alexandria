@@ -234,11 +234,12 @@ def test_variant_table_is_the_planned_one():
         Variant("hybrid-k20", rrf_k=20),
         Variant("fts-or", mode="fts", fts_operator="or"),
         Variant("hybrid-or", fts_operator="or"),
+        Variant("hybrid+title", titles=True, datasets=("papers", "papers-titles")),
     ]}
 
 
 def test_all_means_every_variant_that_applies_to_the_dataset():
-    assert len(resolve("all", "papers")) == 12
+    assert len(resolve("all", "papers")) == 13
     scifact = [v.name for v in resolve("all", "scifact")]
     assert len(scifact) == 10 and "hybrid-c300" not in scifact and "hybrid-c200" not in scifact
 
@@ -262,9 +263,11 @@ def _spy_search(monkeypatch):
 
 def test_variant_options_reach_search(tiny, tmp_path, fake_embed, fake_rerank, monkeypatch):
     calls = _spy_search(monkeypatch)
-    _run(tiny, tmp_path, rrf_k=20, fts_operator="or", rerank=True, query_instruction="find: ")
+    _run(tiny, tmp_path, rrf_k=20, fts_operator="or", rerank=True, titles=True,
+         query_instruction="find: ")
     _, kw, instruction = calls[-1]
-    assert (kw["rrf_k"], kw["fts_operator"], kw["rerank"], instruction) == (20, "or", True, "find: ")
+    assert (kw["rrf_k"], kw["fts_operator"], kw["rerank"], kw["titles"], instruction) == (
+        20, "or", True, True, "find: ")
     assert kw["limit"] == ev_run.SEARCH_LIMIT
 
 
@@ -295,7 +298,8 @@ def test_summary_records_each_variants_search_settings(tiny, tmp_path, fake_embe
         Variant("hybrid+rerank", rerank=True, index=SMALL),
     ])
     assert summary["variants"]["hybrid"]["search"] == {
-        "rrf_k": 60, "fts_operator": "and", "query_instruction": "", "rerank": None}
+        "rrf_k": 60, "fts_operator": "and", "query_instruction": "", "rerank": None,
+        "titles": False}
     assert summary["variants"]["hybrid+rerank"]["search"]["rerank"] == {
         "model": "BAAI/bge-reranker-base", "revision": "test-rerank-rev", "top_n": 50}
     again = _main(tiny, tmp_path, monkeypatch, [Variant("hybrid", index=SMALL)])

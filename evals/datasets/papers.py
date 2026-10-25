@@ -362,6 +362,26 @@ def load(cache_dir: Path, data_dir: Path = DATA_DIR) -> Dataset:
     )
 
 
+def title_lookups(papers: Dataset) -> Dataset:
+    """Known-item searches by title (H7): one query per paper, its arXiv title
+    typed as is, with that paper as its only relevant document."""
+    ids = sorted(papers.titles)
+    queries = {f"t{n:02d}": papers.titles[i] for n, i in enumerate(ids, 1)}
+    return Dataset(
+        name="papers-titles",
+        docs=papers.docs,
+        queries=queries,
+        qrels={q: {i: 2} for q, i in zip(queries, ids)},
+        source=papers.source,
+        doc_suffix=papers.doc_suffix,
+        titles=papers.titles,
+    )
+
+
+def load_titles(cache_dir: Path, data_dir: Path = DATA_DIR) -> Dataset:
+    return title_lookups(load(cache_dir, data_dir))
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(
         prog="python -m evals.datasets.papers",

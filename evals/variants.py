@@ -24,6 +24,7 @@ class Variant:
     rrf_k: int = RRF_K
     fts_operator: FtsOperator = "and"
     rerank: bool = False
+    titles: bool = False
     datasets: tuple[str, ...] | None = None    # None: every dataset
 
 
@@ -43,6 +44,8 @@ _ALL = [
     Variant("hybrid-k20", rrf_k=20),          # a sensitivity check, not a tuning target
     Variant("fts-or", mode="fts", fts_operator="or"),
     Variant("hybrid-or", fts_operator="or"),
+    # H7: SciFact is ingested without titles, so there it is exactly hybrid.
+    Variant("hybrid+title", titles=True, datasets=("papers", "papers-titles")),
 ]
 VARIANTS: dict[str, Variant] = {v.name: v for v in _ALL}
 BASELINE = "hybrid"

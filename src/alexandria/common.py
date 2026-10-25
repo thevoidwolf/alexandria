@@ -35,6 +35,7 @@ def search_hit_payload(h: SearchHit) -> dict[str, Any]:
         "fts_rank": h.fts_rank,
         "vec_rank": h.vec_rank,
         "vec_similarity": h.vec_similarity,
+        "title_rank": h.title_rank,
         "matched_in": list(h.matched_in),
         "snippet": format_snippet_markdown(h.snippet),
         "title": h.title,
