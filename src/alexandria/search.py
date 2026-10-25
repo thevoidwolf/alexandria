@@ -48,8 +48,10 @@ class SearchHit:
     # None means the chunk didn't appear in that retriever's window.
     fts_rank: int | None = None
     vec_rank: int | None = None
-    # Convenience view of which retrievers surfaced this chunk. A hit in
-    # both is materially more confident than a hit in either alone.
+    # Convenience view of which retrievers surfaced this chunk. In the
+    # retrieval evals (evals/REPORT.md, H4) a top-ranked hit in both was
+    # much more often relevant than one only the vector side found; no
+    # FTS-only hit reached the top 10, so that comparison is untested.
     matched_in: tuple[str, ...] = ()
     # Cross-encoder score when the search reranked and this chunk was among
     # the ``rerank_top_n`` it scored; None otherwise. Higher is better.
