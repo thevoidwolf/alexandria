@@ -1,7 +1,9 @@
 # Alexandria retrieval report
 
-Work in progress. Results, analyses and the failure log are added as each
-phase lands; see [README.md](README.md) for how to run the harness.
+How well Alexandria's search retrieves, measured on BEIR SciFact and on a
+set of public arXiv papers, with the hypotheses and plan changes recorded
+before the results they bear on. See [README.md](README.md) for how to run
+the harness.
 
 ## Hypotheses (pre-registered)
 
@@ -663,6 +665,21 @@ graded.
 | AND, then OR, as the default | the fallback's CI lower bound above −0.02 | +0.003 [−0.021, +0.028] | rule not met |
 | Chunk size | `hybrid-c200`'s or `hybrid-c300`'s CI entirely above 0 | c200 +0.004 [−0.022, +0.032]; c300 +0.008 [−0.019, +0.035] | rule not met |
 <!-- /report -->
+
+Voidwolf's decisions, on 2026-10-25: each rule's outcome stands.
+
+- **Reranking stays CLI-only.** It gained nothing measurable on either
+  set, for about 13 s a query on CPU, so it isn't added to the MCP tools,
+  and the README says why. With the rule unmet, there is no GPU timing to
+  do.
+- **AND stays the default.** The fallback's lower bound, −0.0208, misses
+  the threshold by 0.0008. The threshold was set before the grades to
+  settle exactly this kind of call, so it stands, and the near miss is
+  recorded here rather than argued away. Natural-language queries still
+  fall back to vector-only search (P1), as measured above.
+- **Chunks stay at 800 words with a 100-word overlap.** Almost all of
+  them overflow the embedding model's window (P2), but neither smaller
+  size measurably helped retrieval.
 
 ### Failure log
 

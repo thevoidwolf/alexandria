@@ -61,6 +61,34 @@ cosine nearest-neighbours over sqlite-vec, combined with reciprocal rank fusion
 full text, the keyword index, and the vector index, plus a content-addressed
 `blobs/` tree of the original bytes for provenance and re-extraction.
 
+## How well does it retrieve?
+
+Measured with the harness in [`evals/`](evals/) on two sets: BEIR's SciFact
+(5,183 abstracts, 300 claims) and 37 public arXiv papers with 43 queries
+written and graded by hand. nDCG@10, with the papers set's difference from
+the default and its paired bootstrap 95% CI:
+
+| Search | SciFact | Papers | Papers, Δ vs hybrid [95% CI] | p50 latency |
+|---|---|---|---|---|
+| Keyword only (`--mode fts`) | 0.047 | 0.261 | −0.458 [−0.544, −0.374] | 0.4 ms |
+| Vector only (`--mode vec`) | 0.720 | 0.696 | −0.023 [−0.056, +0.005] | 15 ms |
+| **Hybrid (default)** | **0.722** | **0.720** | — | 16 ms |
+| Hybrid + reranker (`--rerank`) | 0.719 | 0.733 | +0.014 [−0.019, +0.048] | 12.8 s |
+
+Latency is warm, per query, on the papers set, on a Ryzen 7 5700X3D CPU.
+
+Hybrid search beats keyword search by a wide margin, but on neither set is it
+measurably ahead of vector search alone. None of the changes tried beats it
+with a CI clear of zero: BGE's query instruction, a bigger embedding model,
+smaller chunks, OR-joined keywords and the reranker. Part of the reason is the keyword
+side. FTS matches only chunks that contain every word of the query, so it finds
+nothing for 95% of SciFact's claims and 47% of the papers queries, and those
+are ranked by vector search alone. [evals/REPORT.md](evals/REPORT.md) has the
+full tables, each variant's cost, the hypotheses written before any run, and a
+hand-written failure log. The papers set is small and was graded by one person,
+with papers no variant returned counted as not relevant, so its CIs are wide:
+differences under about 0.03 can't be told apart from noise.
+
 ## Install
 
 Requires Python 3.12+ and [uv](https://github.com/astral-sh/uv).
@@ -125,8 +153,8 @@ device = "cpu"                   # "cpu" | "cuda" | "mps"
 
 [search]
 # Cross-encoder reranking, used by `alexandria search --rerank` (or by default
-# with rerank = true). The MCP tools and web UI don't rerank yet: that waits
-# on the retrieval evals (evals/REPORT.md) weighing the gain against latency.
+# with rerank = true). The MCP tools and web UI don't rerank: in the retrieval
+# evals it gained nothing measurable, for about 13 s a query on CPU.
 rerank = false
 rerank_model = "BAAI/bge-reranker-base"
 rerank_top_n = 50                # fused chunks the cross-encoder re-orders

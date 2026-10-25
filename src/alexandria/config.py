@@ -21,8 +21,9 @@ class EmbeddingsConfig:
 class SearchConfig:
     # Cross-encoder reranking of the top fused chunks. Off by default, and
     # only the CLI uses it (``alexandria search --rerank``; ``rerank = true``
-    # makes that the CLI default). The MCP tools and web UI don't rerank
-    # until the retrieval evals say it's worth the latency.
+    # makes that the CLI default). The MCP tools and web UI don't rerank:
+    # in the retrieval evals it gained nothing measurable, for about 13 s
+    # a query on CPU (evals/REPORT.md).
     rerank: bool = False
     rerank_model: str = "BAAI/bge-reranker-base"
     rerank_top_n: int = 50                # fused chunks passed to the cross-encoder
